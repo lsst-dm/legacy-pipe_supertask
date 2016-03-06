@@ -23,6 +23,7 @@ from __future__ import division, absolute_import
 from lsst.afw.display.ds9 import mtv
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
+import lsst.pipe.supertask as pipeSuper
 from lsst.pipe.tasks.exampleStatsTasks import ExampleSigmaClippedStatsTask
 
 # The following block adds links to this task from the Task Documentation page.
@@ -48,7 +49,7 @@ class NewExampleCmdLineConfig(pexConfig.Config):
         default = False,
     )
 
-class NewExampleCmdLineTask(pipeBase.SuperTask):
+class NewExampleCmdLineTask(pipeSuper.SuperTask):
     """!Example command-line task that computes simple statistics on an image
 
     \section pipeTasks_ExampleCmdLineTask_Contents Contents

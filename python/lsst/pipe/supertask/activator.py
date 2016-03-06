@@ -30,7 +30,7 @@ import inspect
 import pkgutil
 import pyclbr
 import contextlib
-from .argumentParser import ArgumentParser
+from lsst.pipe.base.argumentParser import ArgumentParser
 import argparse as argp
 
 import importlib
@@ -39,7 +39,7 @@ import importlib
 __all__ = ["Activator", "CmdLineActivator"]
 
 # This is the temporary place for all the packages with (Super)tasks inside
-TASK_PACKAGES = {'lsst.pipe.base.examples': None, 'lsst.pipe.tasks': None}
+TASK_PACKAGES = {'lsst.pipe.supertask.examples': None, 'lsst.pipe.tasks': None}
 
 for pkg in TASK_PACKAGES.keys():
     # This get the list of modules inside package, from the __init__.py inside package

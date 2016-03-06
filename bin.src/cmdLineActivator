@@ -20,5 +20,5 @@
 # the GNU General Public License along with this program.  If not,
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
-from lsst.pipe.base.activator import CmdLineActivator
+from lsst.pipe.supertask.activator import CmdLineActivator
 CmdLineActivator.parse_and_run()

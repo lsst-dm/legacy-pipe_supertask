@@ -6,8 +6,8 @@ from lsst.afw.image import MaskU
 import lsst.afw.math as afwMath
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
-import lsst.pipe.base.super_task as super_task
-from lsst.pipe.base.super_task import SuperTask
+import lsst.pipe.supertask.super_task as super_task
+from lsst.pipe.supertask.super_task import SuperTask
 
 
 

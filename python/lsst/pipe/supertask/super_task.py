@@ -26,7 +26,7 @@ from __future__ import absolute_import, division, print_function
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
 import inspect
-from .task import Task
+from lsst.pipe.base.task import Task
 from lsst.pipe.base.struct import Struct
 
 
