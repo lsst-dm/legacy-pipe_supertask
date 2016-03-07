@@ -60,3 +60,10 @@ target/
 
 #Ipython Notebook
 .ipynb_checkpoints
+
+.sconf_temp
+.sconsign.dblite
+python/lsst/pipe/supertask/version.py
+ups/*.cfgc
+bin/cmdLineActivator
+.idea/
