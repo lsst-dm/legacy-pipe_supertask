@@ -26,20 +26,24 @@ from __future__ import absolute_import, division, print_function
 #
 
 import sys
+import os.path
 import inspect
 import pkgutil
 import pyclbr
 import contextlib
 from lsst.pipe.base.argumentParser import ArgumentParser
 import argparse as argp
-
 import importlib
 
 
 __all__ = ["Activator", "CmdLineActivator"]
 
-# This is the temporary place for all the packages with (Super)tasks inside
+# This is the temporary place for all the packages with (Super)tasks inside, it can be overridden from the
+# command line
 TASK_PACKAGES = {'lsst.pipe.supertask.examples': None, 'lsst.pipe.tasks': None}
+
+# Task discovery will look for all classes ended in Task within the modules except for the ones listed here
+EXEMPTED_TASKS = ('WorkFlowParTask', 'WorkFlowSeqTask', 'Task', 'SuperTask', 'WorkFlowTask', 'CmdLineTask')
 
 for pkg in TASK_PACKAGES.keys():
     # This get the list of modules inside package, from the __init__.py inside package
@@ -106,23 +110,17 @@ class TaskNameError(Exception):
     """
 
     def __init__(self, msg, errs):
-        """
-        Initiate the class, gets the errs and message
-        """
         super(TaskNameError, self).__init__(msg)
         self.errs = errs
 
 
 class Activator(object):
     """
-    Hook for other activators
+    Hook for other activators, The __init__ method might grow into a common initialization, right now
+    is overridden
     """
 
     def __init__(self):
-        """
-        This might grow into a common initialization, right now
-        is overridden
-        """
         pass
 
     def activate(self):
@@ -132,25 +130,61 @@ class Activator(object):
         pass
 
 
+def get_inheritance(stask_class, subclasses=None):
+    """
+    Get all inheritance classes for a given task to differentiate
+     between SuperTask, CmdLineTask, etc.
+
+    :param stask_class: the output class from pyclbr containing the sub-class information
+    :return: a string with all sub-classes
+    """
+
+    if subclasses is None:  # First call, subclasses is empty
+        subclasses = []
+    temp_class = stask_class.super[0]  # simple inheritance
+    if isinstance(temp_class, pyclbr.Class):
+        subclasses.append(temp_class.name)
+        subclasses = get_inheritance(temp_class, subclasses)  # look recursively for super classes
+    else:
+        subclasses.append(temp_class)
+    return subclasses
+
+
+class ManualPackage(object):
+    """
+    Mock package class to  perform the task discovery for manually entered path to (Super)Task. It has the
+    needed methods to the task discovery for a manually entered path in the command line.
+
+     Just define the needed attributes pretending this is a package class. The override attribute is to tell
+     the task discovery this is not a real package class so it looks for modules inside the given path. The
+     __name__ is reformatted so the command line can take path with or without '/' but appends it at the
+     end for printing purposes only. E.g, one can enter path '.' and it will print the path './.modulename'
+     instead of '..modulename'.
+    """
+
+    def __init__(self, path):
+        self.__path__ = [path]
+        self.__name__ = os.path.normpath(path) + os.path.sep
+        self.override = True
+
+
 class CmdLineActivator(Activator):
     """
     Activator for the command line: This Class takes the higher level SuperTask as input and
     executes in the command line, similarly to CmdLineTask but this is a generic way to run (
     Super)Task. It takes the name of the task from the command line along all the arguments to
     run the task.
-    Look http://dmtn-002.lsst.io to see examples on how to invoke the activator
+
+    Constructs the CmdLineActivator for the SuperTask Class parsed, given the command line options
+
+    :param SuperTask: The actual SuperTask Class that the activator will execute activate
+    :param parsed_cmd: The parsed arguments in the command line, relevant to the task, not to the activator
+    :param return_results: Whether or not return the results, similar to CmdLineTask
+
+    Look http://dmtn-002.lsst.io to see examples on how to invoke the activator.
     """
 
     def __init__(self, SuperTask, parsed_cmd, return_results=False):
-        """
-        Constructs the CmdLineActivator for the SuperTask Class parsed, given the command line
-        options
-
-        :param SuperTask: The actual SuperTask Class that the activator will execute activate
-        :param parsed_cmd: The parsed arguments in the command line, relevant to the task,
-        not to the activator
-        :param return_results: Whether or not return the results, similar to CmdLineTask
-        """
         super(CmdLineActivator, self).__init__()
 
         self.SuperTask = SuperTask
@@ -163,7 +197,6 @@ class CmdLineActivator(Activator):
             # self.do_backup = not bool(parsed_cmd.noBackupConfig)
             self.parsed_cmd = parsed_cmd
         self.num_processes = 1  # int(getattr(parsed_cmd, 'processes', 1)), lets fix it for now
-
 
     def make_task(self):
         """
@@ -209,31 +242,29 @@ class CmdLineActivator(Activator):
                 log.warn("Not running the task because there is no data to process; "
                          "you may preview data using \"--show data\"")
 
-
     def display_tree(self):
         """
-        This is for WorkflowTask, if a tree structure is present, then it can be outputted in the
-        stdout
+        Displays the execution tree for WorkflowTask, if a tree structure is present, then it can
+        printed out  to the stdout.
         """
         if hasattr(self.SuperTask, 'print_tree'):
             self.SuperTask.print_tree()
 
     def display_config(self):
         """
-        Display configuration for new framework, i.e., SuperTask created from scratch and linked
-         together in a WorkFlowTask
+        Displays configuration setup for in the new framework, i.e., SuperTask created from scratch and
+        linked together inside a WorkFlowTask.
         """
         if hasattr(self.SuperTask, 'print_config'):
             self.SuperTask.print_config()
 
     def generate_dot(self):
         """
-        It generates a dot file structure of the SuperTask and WorkFlowTask if the methods is
-        defined
+        It generates a graphviz dot file structure of the SuperTask and WorkFlowTask tree.
+        It uses the name of the top level WorkFlowTask.
         """
         if hasattr(self.SuperTask, 'write_tree'):
             self.SuperTask.write_tree()
-
 
     @staticmethod
     def get_target_list(parsed_cmd, **kwargs):
@@ -251,17 +282,16 @@ class CmdLineActivator(Activator):
         """
         return [(ref, kwargs) for ref in parsed_cmd.id.refList]
 
-
     @staticmethod
     def load_super_task(super_taskname):
         """
-        It search and loads the supertask parsed in the command line. To avoid importing every
-        module on every package defined in TASK_PACKAGES, which introduces and extra overhead and
-        might be of potential conflict, it uses pyclbr which finds classes and functions by looking
-        at the source code of the modules. It is much faster than importing all modules and its
-        much simpler as well. An alternative solution would be to have a predefined register of all
-        task and the modules they live in, or, to have a naming convention where the source file
-        and the Task Class inside have the same name. Currently this is not true for all packages.
+        It search and loads the supertask parsed in the command line. To avoid importing every module on
+        every package defined in TASK_PACKAGES, which introduces and extra overhead and might be of
+        potential conflict, it uses pyclbr which finds classes and functions by looking at the source code
+        of  the modules. It is much faster than importing all modules and its much simpler as well. An
+        alternative solution would be to have a predefined register of all task and the modules they live
+        in, or, to have a naming convention where the source file and the Task Class inside have the same
+        name. Currently this is not true for all packages.
 
         :param super_taskname: The name of the SuperTask
         :return: the Task and Config instances of the supertask
@@ -279,27 +309,36 @@ class CmdLineActivator(Activator):
                 if super_taskname.upper() in map(lambda x: x.upper(), mod_classes):
                     super_task_module = module_name  # SuperTask Class Found
                     super_taskname = mod_classes[map(lambda x: x.upper(), mod_classes).index(
-                        super_taskname.upper())]  # Get correct name
+                        super_taskname.upper())]  # Get correct name after capitalization
                     break
                     # Breaks after first instance is found, There should not be SuperTask Classes
                     # with the same name.
                     # I might add an Exception raise if more than one is found
 
             if super_task_module:  # It was found, hence it breaks this loop as well
-                print(package.__name__ + '.' + super_task_module + '.' + super_taskname +
-                      ' found!')  # Debug only
+                print(package.__name__ + '.' + super_task_module + '.' + super_taskname + ' found!')
                 break
 
         if super_task_module:
-            # Need to add a try -- except here
-            python_mod_stask = importlib.import_module(package.__name__ + '.' + super_task_module)
+            if hasattr(package, 'override'):
+                sys.path.insert(0, package.__path__[0])  # First element of the list, this will predominate
+                try:
+                    python_mod_stask = importlib.import_module(super_task_module)
+                except:
+                    # It raises the exception as it won't be able to execute task if had trouble importing
+                    # module
+                    raise
+                finally:
+                    sys.path.remove(package.__path__[0])  # First instance, back to the original sys.path
+            else:
+                python_mod_stask = importlib.import_module(package.__name__ + '.' + super_task_module)
         else:
-            raise RuntimeError("Super Task %s not found!" % super_taskname)  # more to be added
+            raise RuntimeError("Super Task %s not found!" % super_taskname)
 
         # print is for debug only
         # We look for SuperTask Class and Config Class to have matching names
         # i.e., ExampleTask and ExampleConfig should both exists in same module
-        # It is the case for I think all cmdlinetasks, is this convention?
+        # It is the case for I think all current Cmdlinetasks
         print('\nClasses inside module %s : \n ' % (package.__name__ + '.' + super_task_module))
         for _, obj in inspect.getmembers(python_mod_stask):
             if inspect.isclass(obj):
@@ -313,17 +352,15 @@ class CmdLineActivator(Activator):
 
         if class_task_instance is None:
             # No SuperTask found (although to this point this shouldn't happen)
-            raise TaskNameError(' No SuperTaskClass %s found: Task or similiar' % (super_taskname),
-                                None)
+            raise TaskNameError(' No SuperTaskClass %s found: Task or similiar' % super_taskname, None)
 
         if class_config_instance is None:
             # No ConfigClass associated to SuperTask was found
             raise TaskNameError(
-                ' No SuperConfig Class %s found: Task or similiar' % (
-                    super_taskname.replace('Task', 'Config')), None)
+                ' No SuperConfig Class %s found: Task or similiar' % (super_taskname.replace('Task',
+                                                                                             'Config')), None)
 
         return class_task_instance
-
 
     @staticmethod
     def get_tasks(modules_only=False):
@@ -331,66 +368,69 @@ class CmdLineActivator(Activator):
         Get all the tasks available to the activator, basically it returns all the tasks defined as
         (Super)Task classes inside all the packages defined in TASK_PACKAGES
 
-        TODO: Use this function to locate package.module for a given (Super)Task  and use it
-        above to avoid code duplication
+        TODO: Use this function to locate package.module for a given (Super)Task  and use it above to avoid
+        code duplication in load_super_task
 
         :param modules_only: If True, return only the modules, not the tasks
         :return: a list of task or modules inside every package from TASK_PACKAGES
         """
 
         tasks_list = []
+        inheritance_list = []
         module_list = []
         for package in TASK_PACKAGES.itervalues():
             for _, module_name, _ in pkgutil.iter_modules(package.__path__):
-
                 task_module = package.__name__ + '.' + module_name
                 module_list.append(task_module)
-                if not modules_only:
+                if modules_only:
+                    return module_list
+                else:
                     classes_map = pyclbr.readmodule(module_name, path=package.__path__)
                     module_classes = [class_key for class_key in classes_map.keys() if
                                       classes_map[class_key].module == module_name]
-                    for mod_cls in module_classes:
-                        # Get all task except the base classes
-                        if mod_cls[-4:].upper() == 'TASK' and mod_cls not in [
-                            'WorkFlowParTask', 'WorkFlowSeqTask', 'Task', 'SuperTask',
-                            'WorkFlowTask', 'CmdLineTask']:
-                            tasks_list.append(task_module + '.' + mod_cls)
-        if modules_only:
-            return module_list
-        else:
-            return tasks_list
-
+                    for mod_cls_name in module_classes:
+                        # Get all tasks except the base classes, they need to be ended with 'Task'
+                        if mod_cls_name.upper().endswith("TASK") and mod_cls_name not in EXEMPTED_TASKS:
+                            # Add the task class to the list for the current module
+                            tasks_list.append(task_module + '.' + mod_cls_name)
+                            # This will indicate the inheritance of classes for the give task, this is used
+                            # only for reference when listing available tasks in the case some tasks are
+                            # defined as a CmdLineTasks, Tasks or SuperTasks. The -> will indicate the
+                            # inheritance
+                            inheritance_list.append("->".join(get_inheritance(classes_map[mod_cls_name])))
+                    return tasks_list, inheritance_list
 
     @classmethod
     def parse_and_run(cls):
         """
-        Similar to the CmdLineTasks, this classmethod parse the arguments and execute this
-        activator, this classmethod will create a instance of the activator class. This in
-        invoked from the executable cmdLineActivator located in the /bin/ folder
-
+        Similar to the CmdLineTasks, this class method parse the arguments and execute this activator,
+        this class method will create a instance of the activator class. This is invoked from the
+        executable cmdLineActivator located in the /bin/ folder.
         """
 
         # Basic arguments to the CmdLineActivator
-        # This might be added to rhe argumentParser or be in a different module
-        # Arguments for the CmdLineActivator and for the Task it self (as it has been run before)
-        # are separated by the --extras argument. This might change in the future
+        # This might be added to the argumentParser or be in a different module Arguments for the
+        # CmdLineActivator and for the Task it self (as it has been run before) are separated by the
+        # --extras argument. This might change in the future
         parser_activator = ActivatorParser(description='CmdLine Activator')
-        parser_activator.add_argument('taskname', nargs='?', type=str, help='name of the ('
-                                                                            'Super)Task')
+        parser_activator.add_argument('taskname', nargs='?', type=str, help='name of the (Super)Task')
         parser_activator.add_argument('-lt', '--list_tasks', action="store_true", default=False,
                                       help='list tasks available to this activator')
         parser_activator.add_argument('-lm', '--list_modules', action="store_true", default=False,
                                       help='list modules available to this activator')
         parser_activator.add_argument('-lp', '--list_packages', action="store_true", default=False,
-                                      help='list packages available to this activator, defined by'
+                                      help='list packages available to this activator, defined by '
                                            'TASK_PACKAGES')
-        parser_activator.add_argument('--show', nargs='+', default=(),
-                                      help='shows {tree} and/or {config}')
+        parser_activator.add_argument('--show', nargs='+', default=(), help='shows {tree} and/or {config}')
         parser_activator.add_argument('--extras', action="store_true", default=False,
                                       help='Add extra arguments for the (Super)Task itself')
         parser_activator.add_argument('--packages', nargs='+', default=(),
                                       help="Manually adds packages to look for task, overrides "
-                                           "TASK_PACKAGES, to see the available packages use -lp "
+                                           "TASK_PACKAGES, to see the available packages use -lp option")
+        parser_activator.add_argument('--package_paths', nargs='+', default=(),
+                                      help="Manually adds path of packages to look for task (not the module "
+                                           "itself but the path where the module *.py is located, "
+                                           "overrides TASK_PACKAGES, to see the available packages use -lp "
                                            "option")
 
         try:
@@ -407,6 +447,16 @@ class CmdLineActivator(Activator):
             for package in args.packages:
                 TASK_PACKAGES[package] = importlib.import_module(package)
 
+        if args.package_paths:
+            TASK_PACKAGES.clear()
+            for package_path in args.package_paths:
+                # For now prints a warning, it will fail anyways when it can't find the task ot module.
+                # It wont fail automatically in case more than one path is parsed
+                if not os.path.exists(package_path):
+                    print('\n', package_path, ' does not exist!')
+                    continue
+                TASK_PACKAGES[package_path] = ManualPackage(package_path)
+
         if args.list_modules:
             print("\n List of available modules: \n")
             list_modules = cls.get_tasks(modules_only=True)
@@ -421,18 +471,19 @@ class CmdLineActivator(Activator):
 
         if args.list_tasks:
             print("\n List of available tasks: \n")
-            list_tasks = cls.get_tasks()
+            list_tasks, list_subclasses = cls.get_tasks()
             if len(list_tasks) == 0:
                 print('No Tasks in these packages: ')
                 for package in TASK_PACKAGES.keys():
                     print(package)
-            for task in list_tasks:
-                print(task)
+            longest = len(max(list_tasks, key=len))  # Longest task name, to print a formatted list of tasks
+            for task, subclasses in zip(list_tasks, list_subclasses):
+                print('{0: <{zeros}}  :{1}'.format(task, subclasses, zeros=longest))
             print()
             sys.exit()
 
         if args.list_packages:
-            print("\n List of available packages see by this activator: \n")
+            print("\n List of available packages seen by this activator: \n")
             for package in TASK_PACKAGES.keys():
                 print(package)
             print()
@@ -460,7 +511,7 @@ class CmdLineActivator(Activator):
         if args.taskname is None:
             parser_activator.error('Need to specify a task, use --list_task to see the available '
                                    'ones')
-        super_taskname = args.taskname.split('.')[-1]  # TODO: take full path instead of cutting it
+        super_taskname = args.taskname.split('.')[-1]
         super_task_class = cls.load_super_task(super_taskname)
 
         # Check whether is a SuperTask, an old CmdLineTask or neither
@@ -480,7 +531,7 @@ class CmdLineActivator(Activator):
             # Before creating an instance of the class, check whether --extras was indeed parsed
             if args2 is None:
                 parser_activator.error(
-                    'Missing --extras arguments before inputs and options for the task')
+                    'Missing --extras arguments before inputs and options for the (Super)task')
             super_task = super_task_class(activator='cmdLine')
             argparse = ArgumentParser(name=super_task.name)
             argparse.add_id_argument(name="--id", datasetType="raw",
@@ -493,7 +544,7 @@ class CmdLineActivator(Activator):
             CmdLineClass = cls(super_task, parser)
             CmdLineClass.display_tree()
             CmdLineClass.generate_dot()
-            CmdLineClass.activate()
+            CmdLineClass.activate()  # This is where everything starts
 
         if super_task_subclass == 'CmdLineTask':
             # Before creating an instance of the class, check whether --extras was indeed parsed
@@ -512,8 +563,3 @@ class CmdLineActivator(Activator):
 
         if super_task_subclass == 'Both':
             raise RuntimeError("%s is both a SuperTask and a CmdLineTask" % super_taskname)
-
-
-
-
-
