@@ -382,9 +382,7 @@ class CmdLineActivator(Activator):
             for _, module_name, _ in pkgutil.iter_modules(package.__path__):
                 task_module = package.__name__ + '.' + module_name
                 module_list.append(task_module)
-                if modules_only:
-                    return module_list
-                else:
+                if not modules_only:
                     classes_map = pyclbr.readmodule(module_name, path=package.__path__)
                     module_classes = [class_key for class_key in classes_map.keys() if
                                       classes_map[class_key].module == module_name]
@@ -398,7 +396,10 @@ class CmdLineActivator(Activator):
                             # defined as a CmdLineTasks, Tasks or SuperTasks. The -> will indicate the
                             # inheritance
                             inheritance_list.append("->".join(get_inheritance(classes_map[mod_cls_name])))
-                    return tasks_list, inheritance_list
+        if modules_only:
+            return module_list
+        else:
+            return tasks_list, inheritance_list
 
     @classmethod
     def parse_and_run(cls):
