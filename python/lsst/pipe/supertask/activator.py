@@ -534,9 +534,7 @@ class CmdLineActivator(Activator):
                 parser_activator.error(
                     'Missing --extras arguments before inputs and options for the (Super)task')
             super_task = super_task_class(activator='cmdLine')
-            argparse = ArgumentParser(name=super_task.name)
-            argparse.add_id_argument(name="--id", datasetType="raw",
-                                     help="data ID, e.g. --id visit=12345 ccd=1,2")
+            argparse = super_task._makeArgumentParser()
             # Parsing the second set of arguments to the usual argparse
             parser = argparse.parse_args(config=super_task.ConfigClass(), args=args2)
 
