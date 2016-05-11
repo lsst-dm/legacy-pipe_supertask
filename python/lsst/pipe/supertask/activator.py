@@ -356,7 +356,7 @@ class CmdLineActivator(Activator):
 
         if class_config_instance is None:
             # No ConfigClass associated to SuperTask was found
-            raise TaskNameError(
+            print('WARNING: ' +
                 ' No SuperConfig Class %s found: Task or similiar' % (super_taskname.replace('Task',
                                                                                              'Config')), None)
 
