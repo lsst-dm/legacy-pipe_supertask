@@ -72,8 +72,8 @@ class ExampleMeanTask(SuperTask):
         self._statsControl.setNumIter(self.config.numIter)
         self._statsControl.setAndMask(self._badPixelMask)
 
-        calExp = dataRef.get("raw")
-        maskedImage = calExp.getMaskedImage()
+        rawExp = dataRef.get("raw")
+        maskedImage = rawExp.getMaskedImage()
         return self.run(maskedImage)
 
 
@@ -90,6 +90,12 @@ class ExampleMeanTask(SuperTask):
             meanErr = meanErr,
         )
         return self.output
+
+    @classmethod
+    def _makeArgumentParser(cls):
+        parser = pipeBase.InputOnlyArgumentParser(name=cls._default_name)
+        parser.add_id_argument("--id", "raw", help="data IDs, e.g. --id visit=12345 ccd=1,2^0,3")
+        return parser
 
 
 
@@ -112,8 +118,8 @@ class ExampleStdTask(SuperTask):
         self._statsControl.setNumSigmaClip(self.config.numSigmaClip)
         self._statsControl.setNumIter(self.config.numIter)
         self._statsControl.setAndMask(self._badPixelMask)
-        calExp = dataRef.get("raw")
-        maskedImage = calExp.getMaskedImage()
+        rawExp = dataRef.get("raw")
+        maskedImage = rawExp.getMaskedImage()
         return self.run(maskedImage)
 
 
@@ -129,5 +135,8 @@ class ExampleStdTask(SuperTask):
         )
         return self.output
 
-
-
+    @classmethod
+    def _makeArgumentParser(cls):
+        parser = pipeBase.InputOnlyArgumentParser(name=cls._default_name)
+        parser.add_id_argument("--id", "raw", help="data IDs, e.g. --id visit=12345 ccd=1,2^0,3")
+        return parser
