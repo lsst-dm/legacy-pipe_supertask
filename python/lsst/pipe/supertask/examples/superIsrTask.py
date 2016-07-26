@@ -31,6 +31,45 @@ class SuperIsrTask(SuperTask):
     ConfigClass = IsrTaskConfig
     _default_name = "isr"
 
+    def __init__(self, *args, **kwargs):
+        super(SuperIsrTask, self).__init__(*args, **kwargs)
+        self.makeSubtask("assembleCcd")
+        self.makeSubtask("fringe")
+
+    def getInputData(self):
+        """Return a list of dataset types of all possibly needed inputs"""
+        return ["raw", "bias", "linearizer", "dark", "flat", "defects", "fringes", "brighterFatterKernel"]
+
+    def getOutputData(self):
+        """Return a list of dataset types of all possible outputs"""
+        return ["postISRCCD"]
+
+    def getLevel(self):
+        """Return the Butler level that this task operates on
+
+           not sure if this is the way to go...
+        """
+        return "sensor"
+
+    def readInputData(self, dataRef):
+        """Read needed data thru Butler in a pipeBase.Struct based on config"""
+        ccdExp = dataRef.get('raw', immediate=True)
+        isrData = IsrTask.readIsrData(IsrTask(self.config), dataRef, ccdExp)
+        isrDataDict = isrData.getDict()
+        return pipeBase.Struct(ccdExposure=ccdExp,
+                               bias=isrDataDict['bias'],
+                               linearizer=isrDataDict['linearizer'],
+                               dark=isrDataDict['dark'],
+                               flat=isrDataDict['flat'],
+                               defects=isrDataDict['defects'],
+                               fringes=isrDataDict['fringes'],
+                               bfKernel=isrDataDict['bfKernel'])
+
+    def writeOutputData(self, dataRef, result):
+        """Write output data thru Butler based on config"""
+        if self.config.doWrite:
+            dataRef.put(result.exposure, "postISRCCD")
+
     @pipeBase.timeMethod
     def execute(self, dataRef):
         """!Apply common instrument signature correction algorithms to a raw frame
@@ -38,7 +77,17 @@ class SuperIsrTask(SuperTask):
         @param dataRef: butler data reference
         @return a pipeBase Struct containing:
         - exposure
-        """
-        self.log.info("Processing data ID %s" % (dataRef.dataId,))
 
-        return IsrTask.runDataRef(IsrTask(self.config), dataRef)
+        similar to IsrTask.runDataRef()
+        """
+        self.log.info("Performing Super ISR on sensor data ID %s" % (dataRef.dataId,))
+
+        # IsrTask.runDataRef includes these three steps
+        self.log.info("Reading input data using dataRef")
+        inputData = self.readInputData(dataRef)
+        self.log.info("Running operations. The run() method should not take anything Butler")
+        result = IsrTask.run(IsrTask(self.config), **inputData.getDict())
+        self.log.info("Writing output data using dataRef")
+        self.writeOutputData(dataRef, result)
+
+        return result
