@@ -26,8 +26,9 @@ from __future__ import absolute_import, division, print_function
 # see <http://www.lsstcorp.org/LegalNotices/>.
 #
 import inspect
+import lsst.afw.table as afwTable
 from lsst.pipe.base.argumentParser import ArgumentParser
-from lsst.pipe.base.task import Task
+from lsst.pipe.base.task import Task, TaskError
 from lsst.pipe.base.struct import Struct
 
 
@@ -111,7 +112,7 @@ class SuperTask(Task):
     _default_name = None
     _parent_name = None
 
-    def __init__(self, config=None, name=None, parent_task=None, log=None, activator=None):
+    def __init__(self, config=None, name=None, parent_task=None, log=None, activator=None, butler=None):
         """
         Creates the SuperTask, the parameters are the same as Task, except by activator which is a
         hook for the class activator that calls this Task, for cmdLineActivator is the only one
@@ -318,3 +319,72 @@ class SuperTask(Task):
         parser = ArgumentParser(name=task_name)
         parser.add_id_argument("--id", "raw", help="data IDs, e.g. --id visit=12345 ccd=1,2^0,3")
         return parser
+
+    def writeConfig(self, butler, clobber=False, doBackup=True):
+        """!Write the configuration used for processing the data, or check that an existing
+
+        one is equal to the new one if present.
+
+        @param[in] butler   data butler used to write the config.
+            The config is written to dataset type self._getConfigName()
+        @param[in] clobber  a boolean flag that controls what happens if a config already has been saved:
+            - True: overwrite the existing config
+            - False: raise TaskError if this config does not match the existing config
+        """
+        configName = self._getConfigName()
+        if configName is None:
+            return
+        if clobber:
+            butler.put(self.config, configName, doBackup=doBackup)
+        elif butler.datasetExists(configName):
+            # this may be subject to a race condition; see #2789
+            try:
+                oldConfig = butler.get(configName, immediate=True)
+            except Exception as exc:
+                raise type(exc)("Unable to read stored config file %s (%s); consider using --clobber-config" %
+                                (configName, exc))
+            output = lambda msg: self.log.fatal("Comparing configuration: " + msg)
+            if not self.config.compare(oldConfig, shortcut=False, output=output):
+                raise TaskError(
+                    ("Config does not match existing task config %r on disk; tasks configurations " + \
+                    "must be consistent within the same output repo (override with --clobber-config)") % \
+                    (configName,))
+        else:
+            butler.put(self.config, configName)
+
+    def writeSchemas(self, butler, clobber=False, doBackup=True):
+        """!Write the schemas returned by \ref task.Task.getAllSchemaCatalogs "getAllSchemaCatalogs"
+
+        @param[in] butler   data butler used to write the schema.
+            Each schema is written to the dataset type specified as the key in the dict returned by
+            \ref task.Task.getAllSchemaCatalogs "getAllSchemaCatalogs".
+        @param[in] clobber  a boolean flag that controls what happens if a schema already has been saved:
+            - True: overwrite the existing schema
+            - False: raise TaskError if this schema does not match the existing schema
+
+        @warning if clobber is False and an existing schema does not match a current schema,
+        then some schemas may have been saved successfully and others may not, and there is no easy way to
+        tell which is which.
+        """
+        for dataset, catalog in self.getAllSchemaCatalogs().iteritems():
+            schemaDataset = dataset + "_schema"
+            if clobber:
+                print("Writing schema %s" % schemaDataset)
+                butler.put(catalog, schemaDataset, doBackup=doBackup)
+            elif butler.datasetExists(schemaDataset):
+                print("Getting schema %s" % schemaDataset)
+                oldSchema = butler.get(schemaDataset, immediate=True).getSchema()
+                if not oldSchema.compare(catalog.getSchema(), afwTable.Schema.IDENTICAL):
+                    raise TaskError(
+                        ("New schema does not match schema %r on disk; schemas must be " + \
+                        " consistent within the same output repo (override with --clobber-config)") % \
+                        (dataset,))
+            else:
+                print("Writing schema %s" % schemaDataset)
+                butler.put(catalog, schemaDataset)
+
+    def _getConfigName(self):
+        """!Return the name of the config dataset type, or None if config is not to be persisted
+        @note The name may depend on the config; that is why this is not a class method.
+        """
+        return self.name + "_config"

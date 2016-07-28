@@ -194,7 +194,7 @@ class CmdLineActivator(Activator):
             self.log = parsed_cmd.log
             self.do_raise = bool(parsed_cmd.doraise)
             self.clobber_config = bool(parsed_cmd.clobberConfig)
-            # self.do_backup = not bool(parsed_cmd.noBackupConfig)
+            self.do_backup = not bool(parsed_cmd.noBackupConfig)
             self.parsed_cmd = parsed_cmd
         self.num_processes = 1  # int(getattr(parsed_cmd, 'processes', 1)), lets fix it for now
 
@@ -203,7 +203,12 @@ class CmdLineActivator(Activator):
         It creates another instance of the SuperTask passed to the activator, it returns the
         SuperTask instance. Similar to MakeTask in CmdlineTask
         """
-        return self.SuperTask.__class__(config=self.config, log=self.log, activator='cmdLine')
+        if hasattr(self.parsed_cmd, 'butler'):
+            self.log.info("Got a butler from parsed_cmd")
+            butler = self.parsed_cmd.butler
+        else:
+            butler = None
+        return self.SuperTask.__class__(config=self.config, log=self.log, activator='cmdLine', butler=butler)
 
     def precall(self):
         """
@@ -212,6 +217,8 @@ class CmdLineActivator(Activator):
 
         TODO: Need to add writeConfig, writeSchema and writeMetadata to activator from
         """
+        self.SuperTask.writeConfig(self.parsed_cmd.butler, clobber=self.clobber_config, doBackup=self.do_backup)
+        self.SuperTask.writeSchemas(self.parsed_cmd.butler, clobber=self.clobber_config, doBackup=self.do_backup)
         return True
 
     def activate(self):
