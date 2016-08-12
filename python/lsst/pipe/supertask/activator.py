@@ -206,7 +206,11 @@ class CmdLineActivator(Activator):
         It creates another instance of the SuperTask passed to the activator, it returns the
         SuperTask instance. Similar to MakeTask in CmdlineTask
         """
-        return self.SuperTask.__class__(config=self.config, log=self.log, activator='cmdLine')
+        if hasattr(self.parsed_cmd, 'butler'):
+            butler = self.parsed_cmd.butler
+        else:
+            butler = None
+        return self.SuperTask.__class__(config=self.config, log=self.log, activator='cmdLine', butler=butler)
 
     def precall(self):
         """
