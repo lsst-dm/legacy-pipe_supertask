@@ -4,6 +4,7 @@ for SuperTask. Documentation and examnple use can be found at
 http://dmtn-002.lsst.io
 """
 from __future__ import absolute_import, division, print_function
+from builtins import str
 #
 # LSST Data Management System
 # Copyright 2008, 2009, 2010, 2011 LSST Corporation.
@@ -90,6 +91,7 @@ def wrapclass(decorator):
 
 @wrapclass(wraprun)
 class SuperTask(Task):
+
     """
     Base class for Super-Tasks, which are extended classes of pipe.base.Task that can be called
     using activators, in particular from the cmdLineActivator so these can be executed in the
@@ -152,7 +154,6 @@ class SuperTask(Task):
 
         self.log.info('%s was initiated' % self.name)  # For debugging only,  to be removed
 
-
     @property
     def name(self):
         """
@@ -184,7 +185,6 @@ class SuperTask(Task):
         :param activator:  new name of activator
         """
         self._activator = activator
-
 
     @property
     def task_kind(self):
@@ -226,7 +226,6 @@ class SuperTask(Task):
         """
         self._completed = completed
 
-
     def pre_run(self, *args, **kwargs):
         """
         Prerun method, which given the decorator @wraprun will run before run()
@@ -243,14 +242,12 @@ class SuperTask(Task):
         if args is None and kwargs in None:
             self.completed = True
 
-
     def run(self, *args, **kwargs):
         """
         This function is the one that actually operates on teh data (exposed by execute) and usually
         returning a Struct with the collected results
         """
         pass
-
 
     @property
     def parser(self):
@@ -290,7 +287,7 @@ class SuperTask(Task):
         if self.list_config is None:
             self.list_config = []
         root_name = self.name + '.'
-        for key, val in self.config.iteritems():
+        for key, val in self.config.items():
             self.list_config.append(root_name + 'config.' + key + ' = ' + str(val))
         return self.list_config
 
