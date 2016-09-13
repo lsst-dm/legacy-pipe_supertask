@@ -48,7 +48,7 @@ TASK_PACKAGES = {'lsst.pipe.supertask.examples': None, 'lsst.pipe.tasks': None}
 # Task discovery will look for all classes ended in Task within the modules except for the ones listed here
 EXEMPTED_TASKS = ('WorkFlowParTask', 'WorkFlowSeqTask', 'Task', 'SuperTask', 'WorkFlowTask', 'CmdLineTask')
 
-for pkg in list(TASK_PACKAGES.keys()):
+for pkg in TASK_PACKAGES:
     # This get the list of modules inside package, from the __init__.py inside package
     TASK_PACKAGES[pkg] = importlib.import_module(pkg)
 
@@ -307,12 +307,13 @@ class CmdLineActivator(Activator):
             for _, module_name, _ in pkgutil.iter_modules(package.__path__):  # Loop over modules
                 # Get a dictionary of  ALL classes defined inside module
                 classes_map = pyclbr.readmodule(module_name, path=package.__path__)
-                mod_classes = [class_key for class_key in list(classes_map.keys()) if
+                mod_classes = [class_key for class_key in classes_map if
                                classes_map[class_key].module.upper() == module_name.upper()]
-                if super_taskname.upper() in [x.upper() for x in mod_classes]:
+                mod_classes_list = [x.upper() for x in mod_classes]
+                if super_taskname.upper() in mod_classes_list:
                     super_task_module = module_name  # SuperTask Class Found
-                    super_taskname = mod_classes[map(lambda x: x.upper(), mod_classes).index(
-                        super_taskname.upper())]  # Get correct name after capitalization
+                    # Get correct name after capitalization
+                    super_taskname = mod_classes[mod_classes_list.index(super_taskname.upper())]  
                     break
                     # Breaks after first instance is found, There should not be SuperTask Classes
                     # with the same name.
@@ -387,7 +388,7 @@ class CmdLineActivator(Activator):
                 module_list.append(task_module)
                 if not modules_only:
                     classes_map = pyclbr.readmodule(module_name, path=package.__path__)
-                    module_classes = [class_key for class_key in list(classes_map.keys()) if
+                    module_classes = [class_key for class_key in classes_map if
                                       classes_map[class_key].module == module_name]
                     for mod_cls_name in module_classes:
                         # Get all tasks except the base classes, they need to be ended with 'Task'
@@ -466,7 +467,7 @@ class CmdLineActivator(Activator):
             list_modules = cls.get_tasks(modules_only=True)
             if len(list_modules) == 0:
                 print('No modules in these packages: ')
-                for package in list(TASK_PACKAGES.keys()):
+                for package in TASK_PACKAGES:
                     print(package)
             for modules in list_modules:
                 print(modules)
@@ -478,7 +479,7 @@ class CmdLineActivator(Activator):
             list_tasks, list_subclasses = cls.get_tasks()
             if len(list_tasks) == 0:
                 print('No Tasks in these packages: ')
-                for package in list(TASK_PACKAGES.keys()):
+                for package in TASK_PACKAGES:
                     print(package)
             longest = len(max(list_tasks, key=len))  # Longest task name, to print a formatted list of tasks
             for task, subclasses in zip(list_tasks, list_subclasses):
@@ -488,7 +489,7 @@ class CmdLineActivator(Activator):
 
         if args.list_packages:
             print("\n List of available packages seen by this activator: \n")
-            for package in list(TASK_PACKAGES.keys()):
+            for package in TASK_PACKAGES:
                 print(package)
             print()
             sys.exit()
