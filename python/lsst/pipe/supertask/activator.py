@@ -148,7 +148,7 @@ def get_inheritance(stask_class, subclasses=None):
     if isinstance(temp_class, pyclbr.Class):
         subclasses.append(temp_class.name)
         subclasses = get_inheritance(temp_class, subclasses)  # look recursively for super classes
-    else:
+    elif not isinstance(temp_class, pyclbr.Function):
         subclasses.append(temp_class)
     return subclasses
 
@@ -210,7 +210,7 @@ class CmdLineActivator(Activator):
             butler = self.parsed_cmd.butler
         else:
             butler = None
-        return self.SuperTask.__class__(config=self.config, log=self.log, activator='cmdLine', butler=butler)
+        return self.SuperTask.__class__(config=self.config, log=self.log, butler=butler)
 
     def precall(self):
         """
@@ -543,8 +543,8 @@ class CmdLineActivator(Activator):
             if args2 is None:
                 parser_activator.error(
                     'Missing --extras arguments before inputs and options for the (Super)task')
-            super_task = super_task_class(activator='cmdLine')
-            argparse = super_task._makeArgumentParser()
+            super_task = super_task_class()
+            argparse = super_task.makeArgumentParser()
             # Parsing the second set of arguments to the usual argparse
             parser = argparse.parse_args(config=super_task.ConfigClass(), args=args2)
 

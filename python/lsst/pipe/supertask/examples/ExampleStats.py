@@ -6,7 +6,6 @@ from lsst.afw.image import MaskU
 import lsst.afw.math as afwMath
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
-import lsst.pipe.supertask.super_task as super_task
 from lsst.pipe.supertask.super_task import SuperTask
 
 
@@ -52,11 +51,10 @@ class ExampleStdConfig(pexConfig.Config):
     )
 
 
-@super_task.wrapclass(super_task.wraprun)
 class ExampleMeanTask(SuperTask):
 
     ConfigClass = ExampleMeanConfig
-    _default_name = "exampleMean"
+    _DefaultName = "exampleMean"
 
     def __init__(self, *args, **kwargs):
 
@@ -90,8 +88,8 @@ class ExampleMeanTask(SuperTask):
         return self.output
 
     @classmethod
-    def _makeArgumentParser(cls):
-        parser = pipeBase.InputOnlyArgumentParser(name=cls._default_name)
+    def makeArgumentParser(cls):
+        parser = pipeBase.InputOnlyArgumentParser(name=cls._DefaultName)
         parser.add_id_argument("--id", "raw", help="data IDs, e.g. --id visit=12345 ccd=1,2^0,3")
         return parser
 
@@ -103,11 +101,10 @@ class ExampleMeanTask(SuperTask):
         return None
 
 
-@super_task.wrapclass(super_task.wraprun)
 class ExampleStdTask(SuperTask):
 
     ConfigClass = ExampleStdConfig
-    _default_name = "exampleStd"
+    _DefaultName = "exampleStd"
 
     def __init__(self, *args, **kwargs):
 
@@ -138,8 +135,8 @@ class ExampleStdTask(SuperTask):
         return self.output
 
     @classmethod
-    def _makeArgumentParser(cls):
-        parser = pipeBase.InputOnlyArgumentParser(name=cls._default_name)
+    def makeArgumentParser(cls):
+        parser = pipeBase.InputOnlyArgumentParser(name=cls._DefaultName)
         parser.add_id_argument("--id", "raw", help="data IDs, e.g. --id visit=12345 ccd=1,2^0,3")
         return parser
 

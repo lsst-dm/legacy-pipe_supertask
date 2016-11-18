@@ -36,7 +36,7 @@ class SuperCharacterizeImageConfig(CharacterizeImageConfig):
 class SuperCharacterizeImageTask(SuperTask):
     """!A SuperTask version of CharacterizeImageTask"""
     ConfigClass = SuperCharacterizeImageConfig
-    _default_name = "characterizeImage"
+    _DefaultName = "characterizeImage"
 
     def __init__(self, butler=None, refObjLoader=None, schema=None, **kwargs):
         """!Construct a CharacterizeImageTask
@@ -126,20 +126,13 @@ class SuperCharacterizeImageTask(SuperTask):
         return {"icSrc": sourceCat}
 
     @classmethod
-    def _makeArgumentParser(cls):
+    def makeArgumentParser(cls):
         """!Create and return an argument parser
 
         @param[in] cls      the class object
         @return the argument parser for this task.
         """
-        # Allow either _default_name or _DefaultName
-        if cls._default_name is not None:
-            task_name = cls._default_name
-        elif cls._DefaultName is not None:
-            task_name = cls._DefaultName
-        else:
-            raise RuntimeError("_default_name or _DefaultName is required for a task")
-        parser = pipeBase.ArgumentParser(name=task_name)
+        parser = pipeBase.ArgumentParser(name=cls._DefaultName)
         parser.add_id_argument(name="--id",
                                datasetType="postISRCCD",
                                help="data IDs, e.g. --id visit=12345 ccd=1,2^0,3")
