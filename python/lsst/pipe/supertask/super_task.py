@@ -50,7 +50,7 @@ class SuperTask(Task):
     expose the run method of the Task itself.
     """
 
-    def __init__(self, config=None, name=None, parent_task=None, log=None, butler=None):
+    def __init__(self, config=None, name=None, parentTask=None, log=None, butler=None):
         """
         Creates the SuperTask, the parameters are the same as Task.
 
@@ -59,11 +59,11 @@ class SuperTask(Task):
         :param config:      configuration for this task (an instance of self.ConfigClass,
                             which is a task-specific subclass of lsst.pex.config.Config), or None.
                             If None:
-                              - If parentTask specified then defaults to parentTask.config.name
+                              - If parentTask specified then defaults to parentTask.config.\<name>
                               - If parentTask is None then defaults to self.ConfigClass()
         :param name:        brief name of super_task, or None; if None then defaults to
                             self._DefaultName
-        :param parent_task: the parent task of this subtask, if any.
+        :param parentTask:  the parent task of this subtask, if any.
                              - If None (a top-level task) then you must specify config and name is
                                ignored.
                              - If not None (a subtask) then you must specify name
@@ -81,30 +81,11 @@ class SuperTask(Task):
             name = getattr(self, "_DefaultName", None)
         if name is not None:
             name = name.replace(" ", "_")
-        super(SuperTask, self).__init__(config, name, parent_task, log)  # Initiate Task
+        super(SuperTask, self).__init__(config=config, name=name, parentTask=parentTask, log=log)
 
         self._completed = False  # Hook to indicate whether a SuperTask was completed
         self._list_config = None  # List of configuration items
         self._task_kind = 'SuperTask'  # To differentiate between this and Task
-
-        self.log.info('%s was initiated' % self.name)  # For debugging only,  to be removed
-
-    @property
-    def name(self):
-        """
-        Name of this super-task.
-
-        Note that base class defines `getName()` method which returns the same information,
-        need to think if this property is needed.
-        """
-        return self._name
-
-    @property
-    def task_kind(self):
-        """
-        (obsolete) String representing kind othis task (e.g. "SuperTask")
-        """
-        return self._task_kind
 
     @property
     def completed(self):
@@ -157,7 +138,7 @@ class SuperTask(Task):
         """
         print('\n* Configuration * :\n')
         for key, val in self.config.items():
-            print(self.name + '.config.' + key + ' = ' + str(val))
+            print(self.getName() + '.config.' + key + ' = ' + str(val))
         print()
 
     @classmethod
@@ -246,4 +227,4 @@ class SuperTask(Task):
         """!Return the name of the config dataset type, or None if config is not to be persisted
         @note The name may depend on the config; that is why this is not a class method.
         """
-        return self.name + "_config"
+        return self.getName() + "_config"
