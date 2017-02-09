@@ -133,7 +133,7 @@ class CmdLineParserTestCase(unittest.TestCase):
             list
             """.split())
         list_options = ['show', 'show_headers', 'subparser']
-        self.assertItemsEqual(list(vars(args).keys()), global_options + list_options)
+        self.assertEqual(set(vars(args).keys()), set(global_options + list_options))
         self.assertEqual(args.subcommand, 'list')
 
         args = parser.parse_args(
@@ -141,7 +141,7 @@ class CmdLineParserTestCase(unittest.TestCase):
             show cmd
             """.split())
         show_options = ['taskname', 'show', 'config_overrides', 'subparser', 'do_help']
-        self.assertItemsEqual(list(vars(args).keys()), global_options + show_options)
+        self.assertEqual(set(vars(args).keys()), set(global_options + show_options))
         self.assertEqual(args.subcommand, 'show')
 
         args = parser.parse_args(
@@ -149,7 +149,7 @@ class CmdLineParserTestCase(unittest.TestCase):
             run taskname
             """.split())
         run_options = ['taskname', 'show', 'config_overrides', 'subparser', 'do_help']
-        self.assertItemsEqual(list(vars(args).keys()), global_options + run_options)
+        self.assertEqual(set(vars(args).keys()), set(global_options + run_options))
         self.assertEqual(args.subcommand, 'run')
 
         # default options

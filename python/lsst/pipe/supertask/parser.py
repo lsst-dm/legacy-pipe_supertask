@@ -224,6 +224,9 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
                                        description=("Valid commands, use `<command> --help' to get "
                                                     "more info about each command:"),
                                        prog=parser.prog)
+    # Python3 workaround, see http://bugs.python.org/issue9253#msg186387
+    # The issue was fixed in Python 3.6, workaround is not need starting with that version
+    subparsers.required = True
 
     # list sub-command
     subparser = subparsers.add_parser("list",
