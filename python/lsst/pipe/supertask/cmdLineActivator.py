@@ -29,12 +29,14 @@ from builtins import object
 #--------------------------------
 #  Imports of standard modules --
 #--------------------------------
+import multiprocessing
 import sys
 import traceback
 
 #-----------------------------
 # Imports for other modules --
 #-----------------------------
+from lsst.base import disableImplicitThreading
 import lsst.log as lsstLog
 import lsst.pipe.base.argumentParser as pipeBaseArgParser
 from lsst.pipe.base.task import TaskError
@@ -80,6 +82,38 @@ def _printTable(rows, header):
     for col1, col2 in rows:
         print(col1.ljust(width), col2)
 
+
+class _MPMap(object):
+    """Class implementing "map" function using multiprocessing pool.
+
+    Parameters
+    ----------
+    numProc : `int`
+        Number of process to use for executing tasks.
+    timeout : `float`
+        Time in seconds to wait for tasks to finish.
+    """
+
+    def __init__(self, numProc, timeout):
+        self.numProc = numProc
+        self.timeout = timeout
+
+    def __call__(self, function, iterable):
+        """Apply function to every item of iterable.
+
+        Wrapper around pool.map_async, to handle timeout. This is required
+        so as to trigger an immediate interrupt on the KeyboardInterrupt
+        (Ctrl-C); see
+        http://stackoverflow.com/questions/1408356/keyboard-interrupts-with-pythons-multiprocessing-pool
+
+        Further wraps the function in _poolFunctionWrapper to catch exceptions
+        that don't inherit from Exception.
+        """
+        disableImplicitThreading()  # To prevent thread contention
+        pool = multiprocessing.Pool(processes=self.numProc, maxtasksperchild=1)
+        result = pool.map_async(function, iterable)
+        return result.get(self.timeout)
+
 #------------------------
 # Exported definitions --
 #------------------------
@@ -93,6 +127,12 @@ class CmdLineActivator(object):
     In addition to executing taks this activator provides additional methods
     for task management like dumping configuration or execution chain.
     """
+
+    MP_TIMEOUT = 9999  # Default timeout (sec) for multiprocessing
+
+    def __init__(self):
+        self.task_class = None
+        self.config = None
 
     def parseAndRun(self, argv=None):
         """
@@ -143,13 +183,16 @@ class CmdLineActivator(object):
             print("Task `{}' is not a SuperTask or CmdLineTask".format(task_name))
             return 2
 
+        self.task_class = task_class
+
         # Dispatch to one of the methods
         if task_kind == KIND_CMDLINETASK:
-            return self.doCmdLineTask(args, extra_args, task_class)
+            return self.doCmdLineTask(args, extra_args)
         elif task_kind == KIND_SUPERTASK:
-            return self.doSuperTask(args, extra_args, task_class)
+            return self.doSuperTask(args, extra_args)
 
-    def configLog(self, longlog, logLevels):
+    @staticmethod
+    def configLog(longlog, logLevels):
         """Configure logging system.
 
         Parameters
@@ -232,7 +275,7 @@ class CmdLineActivator(object):
                 headers = ("Task class name", "Kind     ")
             _printTable(tasks, headers)
 
-    def doSuperTask(self, args, extra_args, task_class):
+    def doSuperTask(self, args, extra_args):
         """Implementation of run/show for SuperTask.
 
         Parameters
@@ -241,13 +284,11 @@ class CmdLineActivator(object):
             Parsed command line
         extra_args : `list` of `str`
             extra arguments for sub-command which were not parsed by parser
-        task_class : `type`
-            Class object for SuperTask.
         """
 
         if args.do_help:
-            # before dispaying help populate sub-parser with task-specific options
-            self._copyParserOptions(task_class.makeArgumentParser(), args.subparser)
+            # before displaying help populate sub-parser with task-specific options
+            self._copyParserOptions(self.task_class.makeArgumentParser(), args.subparser)
             args.subparser.print_help()
             return
 
@@ -256,8 +297,8 @@ class CmdLineActivator(object):
                   file=sys.stderr)
             return 2
 
-        # make task instance
-        task, task_args = self._makeSuperTask(task_class, args, extra_args)
+        # parse remaining extra options
+        task_args = self._reParseArgs(args, extra_args)
 
         # do all --show first
         # currently task parser handles that, we have to implement something
@@ -267,28 +308,45 @@ class CmdLineActivator(object):
             # stop here
             return
 
+        # make task instance
+        task = self._makeSuperTask(task_args.butler)
+
+        # how many processed do we want
+        numProc = task_args.processes
+        if numProc > 1 and not self.task_class.canMultiprocess:
+            lsstLog.warn("This task does not support multiprocessing; using one process")
+            numProc = 1
+
         # execute it
         if self.precall(task, task_args):
-            profile_name = getattr(task_args, "profile", None)
+
+            # chose map function being simple sequential map or multi-process map
+            if numProc > 1:
+                timeout = getattr(task_args, 'timeout', None)
+                if timeout is None or timeout <= 0:
+                    timeout = self.MP_TIMEOUT
+                mapFunc = _MPMap(numProc, timeout)
+            else:
+                # map in Py3 returns iterable and we want a complete result
+                mapFunc = lambda func, iterable: list(map(func, iterable))
+
             log = task_args.log
-            target_list = self.makeTargetList(task_args)
+            target_list = self._makeTargetList(task_args)
             if target_list:
+                # call task on each argument in a list
+                profile_name = getattr(task_args, "profile", None)
                 with profile(profile_name, log):
-                    for target in target_list:
-                        args, kwargs = target
-                        task.execute(*args, **kwargs)
+                    mapFunc(self._executeSuperTask, target_list)
             else:
                 log.warn("Not running the task because there is no data to process; "
                          "you may preview data using \"--show-data\"")
 
-    def makeTargetList(self, task_args):
+    def _makeTargetList(self, task_args):
         """Make the target list from the command line argument.
 
-        We look at all dataId arguments in parsed command line, if there is
-        an argument with name "id" then take its dataRefs and call task on
-        each separate dataRef. For all other dataId arguments we add keyword
-        argments with the names of the dataId arguments and values being the
-        full list of its corresponding dataRefs.
+        For actual work of splitting/grouping of dataRefs we depend on a
+        corresponding method of task class. Here we just collect all dataRefs
+        from command line arguments and forward them to task method.
 
         .. note:: This is a temporary solution until we replace task parser with
                 better approach
@@ -300,23 +358,21 @@ class CmdLineActivator(object):
 
         Returns
         -------
-        `list` of (args, kwargs) tuples which are arguments to be passed to
-        task execute() method.
+        `list` of (dataRefs, kwargs) tuples which are arguments to be passed
+        to `self._executeSuperTask()` method.
         """
-        refList = None
-        kwargs = {}
+        dataRefMap = {}
         for optname, optval in vars(task_args).items():
             if isinstance(optval, pipeBaseArgParser.DataIdContainer):
-                if optname == "id":
-                    refList = optval.refList
-                else:
-                    kwargs[optname] = optval.refList
-        if refList is not None:
-            return [([ref], kwargs) for ref in refList]
-        else:
-            return [([], kwargs)]
+                dataRefMap[optname] = optval.refList
+        # "id" dataRefs are passed as separate argument
+        idRefList = dataRefMap.pop("id", None)
 
-    def _precallImpl(self, task, task_args):
+        # forward collected dataRefs to task class
+        return self.task_class.makeTargetList(idRefList, dataRefMap)
+
+    @staticmethod
+    def _precallImpl(task, task_args):
         """The main work of 'precall'
 
         We write package versions, schemas and configs, or compare these to existing
@@ -325,7 +381,7 @@ class CmdLineActivator(object):
         Parameters
         ----------
         task
-            instance of `task_class`
+            instance of SuperTask
         task_args : `argparse.Namespace`
             command line as parsed by a task parser
         """
@@ -344,7 +400,7 @@ class CmdLineActivator(object):
         Parameters
         ----------
         task
-            instance of `task_class`
+            instance of SuperTask
         task_args : `argparse.Namespace`
             command line as parsed by a task parser
 
@@ -364,24 +420,44 @@ class CmdLineActivator(object):
                 return False
         return True
 
-    def _makeSuperTask(self, task_class, args, extra_args):
-        """Make a fully-configured SuperTask instance.
+    def _makeSuperTask(self, butler=None):
+        """Create new task instance.
 
         Parameters
         ----------
-        task_class : `type`
-            Class object for SuperTask.
-        args : `argparse.Namespace`
-            Parsed command line
-        extra_args : `list` of `str`
-            extra arguments for sub-command which were not parsed by parser
+        butler : optional
+            Data butler instance passed to task constructor.
 
         Returns
         -------
         task
-            instance of `task_class`
-        task_args : `argparse.Namespace`
-            command line as parsed by a task parser
+            Instance of SuperTask.
+        """
+        if butler is None:
+            task = self.task_class(config=self.config)
+        else:
+            task = self.task_class(config=self.config, butler=butler)
+        return task
+
+    def _reParseArgs(self, args, extra_args):
+        """Parse command line including task-specific options.
+
+        .. note:: Currently we do parsing by building new command line as
+                understood by `pipe.base.ArgumentParser` and using
+                task-provided parser to parse that command line.
+
+        Parameters
+        ----------
+        args : `argparse.Namespace`
+            Partially-parsed command line, only options that are known to
+            this activator are parsed and stored in this namespace instance.
+        extra_args : `list` of `str`
+            Extra arguments for sub-command which were not parsed by parser.
+
+        Returns
+        -------
+        `argparse.Namespace` - parsed command line from task parser, this
+        includes all parsed options.
         """
         # We need to make Config instance and update if from overrides.
         # To that now now we will be using argument parser that is provided
@@ -392,15 +468,60 @@ class CmdLineActivator(object):
         argv = self._makeArgumentList(args, extra_args)
 
         # parse command line in a new parser
-        parser = task_class.makeArgumentParser()
-        config = task_class.ConfigClass()
+        parser = self.task_class.makeArgumentParser()
+        config = self.task_class.ConfigClass()
         task_args = parser.parse_args(config, args=argv)
 
-        butler = getattr(task_args, "butler", None)
-        task = task_class(config=config, butler=butler)
-        return task, task_args
+        # remember task config
+        self.config = task_args.config
 
-    def doCmdLineTask(self, args, extra_args, task_class):
+        return task_args
+
+    def _executeSuperTask(self, target):
+        """Execute super-task on a single data item.
+
+        Parameters:
+        target: `tuple` of `(dataRef, kwargs)`
+            `dataRef` is a single `ButlerDataRef`, a list of `ButlerDataRef`,
+            or None; it is passed as positional arguments for task `execute()`
+            method. `kwargs` is a `dict` of keyword arguments passed to
+            `execute()`.
+        """
+        dataRef, kwargs = target
+        butler = None
+        # setup logging, include dataId into MDC
+        if dataRef is not None:
+            logger = lsstLog.Log.getDefaultLogger()
+            if hasattr(dataRef, "dataId"):
+                logger.MDC("LABEL", str(dataRef.dataId))
+            elif isinstance(dataRef, (list, tuple)):
+                logger.MDC("LABEL", str([ref.dataId for ref in dataRef if hasattr(ref, "dataId")]))
+
+            if hasattr(dataRef, "getButler"):
+                butler = dataRef.getButler()
+            elif isinstance(dataRef, (list, tuple)) and len(dataRef) > 0:
+                if hasattr(dataRef[0], "getButler"):
+                    butler = dataRef[0].getButler()
+
+        # make task instance
+        task = self._makeSuperTask(butler)
+
+        # Call task execute() method and wrap it to catch exceptions that
+        # don't inherit from Exception. Such exceptions aren't caught by
+        # multiprocessing, which causes the slave process to crash and
+        # you end up hitting the timeout.
+        try:
+            return task.execute(dataRef, **kwargs)
+        except Exception:
+            raise  # No worries
+        except:
+            # Need to wrap the exception with something multiprocessing will recognise
+            cls, exc, tb = sys.exc_info()
+            log = lsstLog.Log.getDefaultLogger()
+            log.warn("Unhandled exception %s (%s):\n%s" % (cls.__name__, exc, traceback.format_exc()))
+            raise Exception("Unhandled exception: %s (%s)" % (cls.__name__, exc))
+
+    def doCmdLineTask(self, args, extra_args):
         """Implementation of run/show for CmdLineTask.
 
         Most of this is a terrible hack trying to make it look more or less
@@ -412,13 +533,11 @@ class CmdLineActivator(object):
             Parsed command line
         extra_args : `list` of `str`
             extra arguments for sub-command which were not parsed by parser
-        task_class : `type`
-            Class object for CmdLineTask.
         """
 
         if args.do_help:
             # before dispaying help populate sub-parser with task-specific options
-            self._copyParserOptions(task_class._makeArgumentParser(), args.subparser)
+            self._copyParserOptions(self.task_class._makeArgumentParser(), args.subparser)
             args.subparser.print_help()
             return
 
@@ -436,9 +555,10 @@ class CmdLineActivator(object):
         argv = self._makeArgumentList(args, extra_args)
 
         # pass everyhting to a task class
-        task_class.parseAndRun(argv)
+        self.task_class.parseAndRun(argv)
 
-    def _copyParserOptions(self, from_parser, to_parser):
+    @staticmethod
+    def _copyParserOptions(from_parser, to_parser):
         """Find what extra option CmdLineTask adds to a parser and add them to
         our parser too.
 
@@ -488,7 +608,8 @@ class CmdLineActivator(object):
                     group = to_parser.add_argument_group("task-specific options")
                 group.add_argument(*args, **kwargs)
 
-    def _makeArgumentList(self, args, extra_args):
+    @staticmethod
+    def _makeArgumentList(args, extra_args):
         """Build command line suitable for Cmdline task.
 
         Looks at the arguments provided to activator and creates new command
