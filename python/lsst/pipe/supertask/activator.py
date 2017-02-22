@@ -41,17 +41,15 @@ import importlib
 
 __all__ = ["Activator", "CmdLineActivator"]
 
+# Standard set of packages to search for tasks
+TASK_PACKAGE_NAMES = ['lsst.pipe.supertask.examples', 'lsst.pipe.tasks']
+
 # This is the temporary place for all the packages with (Super)tasks inside, it can be overridden from the
 # command line
-TASK_PACKAGES = {'lsst.pipe.supertask.examples': None, 'lsst.pipe.tasks': None}
+TASK_PACKAGES = {}
 
 # Task discovery will look for all classes ended in Task within the modules except for the ones listed here
 EXEMPTED_TASKS = ('WorkFlowParTask', 'WorkFlowSeqTask', 'Task', 'SuperTask', 'WorkFlowTask', 'CmdLineTask')
-
-for pkg in TASK_PACKAGES:
-    # This get the list of modules inside package, from the __init__.py inside package
-    TASK_PACKAGES[pkg] = importlib.import_module(pkg)
-
 
 class ActivatorParser(argp.ArgumentParser):
     """
@@ -292,6 +290,27 @@ class CmdLineActivator(Activator):
         return [(ref, kwargs) for ref in parsed_cmd.id.refList]
 
     @staticmethod
+    def init_package_map():
+        """Do one-time initialization of TASK_PACKAGES.
+
+        If TASK_PACKAGES has not been filled yet then populate it with
+        a small set of standard packages defined in TASK_PACKAGE_NAMES.
+        """
+        # initialize TASK_PACKAGES if not done yet
+        if not TASK_PACKAGES:
+            for pkg in TASK_PACKAGE_NAMES:
+                try:
+                    TASK_PACKAGES[pkg] = importlib.import_module(pkg)
+                except ImportError as exc:
+                    print("Failed to import package {}: {}".format(pkg, exc),
+                          file=sys.stderr)
+                    print("Make sure that PYTHONPATH is set correctly, "
+                          "you may need to run\n`setup pipe_tasks' or similar command.",
+                          file=sys.stderr)
+                    sys.exit(1)
+
+
+    @staticmethod
     def load_super_task(super_taskname):
         """
         It search and loads the supertask parsed in the command line. To avoid importing every module on
@@ -308,6 +327,9 @@ class CmdLineActivator(Activator):
         class_task_instance = None
         class_config_instance = None
         super_task_module = None
+
+        # initialize TASK_PACKAGES if not done yet
+        CmdLineActivator.init_package_map()
 
         for package in TASK_PACKAGES.values():  # Loop over all packages
             for _, module_name, _ in pkgutil.iter_modules(package.__path__):  # Loop over modules
@@ -384,6 +406,9 @@ class CmdLineActivator(Activator):
         :param modules_only: If True, return only the modules, not the tasks
         :return: a list of task or modules inside every package from TASK_PACKAGES
         """
+
+        # initialize TASK_PACKAGES if not done yet
+        CmdLineActivator.init_package_map()
 
         tasks_list = []
         inheritance_list = []
@@ -467,6 +492,9 @@ class CmdLineActivator(Activator):
                     print('\n', package_path, ' does not exist!')
                     continue
                 TASK_PACKAGES[package_path] = ManualPackage(package_path)
+
+        # initialize TASK_PACKAGES if not done by the above code yet
+        cls.init_package_map()
 
         if args.list_modules:
             print("\n List of available modules: \n")
