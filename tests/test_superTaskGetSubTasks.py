@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Unit test for SuperTask.get_sub_tasks() method.
 """
 #

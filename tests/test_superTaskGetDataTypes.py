@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Unit test for SuperTask.get_data_types() method.
 """
 #

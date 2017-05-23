@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Simple unit test for parser module.
 """
 #

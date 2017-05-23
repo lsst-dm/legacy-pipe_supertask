@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 """Simple unit test for SuperTask.
 
 Stolen from pipe_base/tests/testTask.py and minimally changed to inherit
