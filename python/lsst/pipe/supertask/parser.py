@@ -28,6 +28,8 @@ Module defining CmdLineParser class and related methods.
 #--------------------------------
 from argparse import Action, ArgumentParser, RawDescriptionHelpFormatter
 import collections
+import itertools
+import re
 import textwrap
 
 #-----------------------------
@@ -99,6 +101,79 @@ class _AppendFlattenAction(Action):
             setattr(namespace, self.dest, dest)
         dest += values
 
+# copied with small mods from pipe.base.argumentParser
+class _IdValueAction(Action):
+    """argparse action callback to process a data ID into a dict
+    """
+
+    def __call__(self, parser, namespace, values, option_string):
+        """Parse dataId option values
+
+        The option value format is:
+        key1=value1_1[^value1_2[^value1_3...] key2=value2_1[^value2_2[^value2_3...]...
+
+        The values (e.g. value1_1) may either be a string, or of the form "int..int" (e.g. "1..3")
+        which is interpreted as "1^2^3" (inclusive, unlike a python range). So "0^2..4^7..9" is
+        equivalent to "0^2^3^4^7^8^9".  You may also specify a stride: "1..5:2" is "1^3^5"
+
+        The cross product is computed for keys with multiple values. For example:
+            --id visit 1^2 ccd 1,1^2,2
+        results in the following data ID dicts being appended to namespace.\<argument>.idList:
+            {"visit":1, "ccd":"1,1"}
+            {"visit":2, "ccd":"1,1"}
+            {"visit":1, "ccd":"2,2"}
+            {"visit":2, "ccd":"2,2"}
+
+        Option values are store in the dict were the key is the value of
+        --type option used before --id and the value is the list of dicts
+        corresponding to each --id option values.
+
+        Parameters
+        ----------
+        parser : argparse.ArgumentParser
+            argument parser
+        namespace : argparse.Namespace
+            parsed command
+        values : list
+            a list of data IDs; see option value format
+        option_string : str
+            option name specified by the user
+        """
+
+        # need --type option before --id
+        if not hasattr(namespace, "_data_type"):
+            parser.error("--type option must be defined in parser")
+        if namespace._data_type is None:
+            parser.error("%s option requires --type to be used before it" % (option_string))
+
+        dest = getattr(namespace, self.dest)
+        if dest is None:
+            dest = {}
+            setattr(namespace, self.dest, dest)
+
+        idDict = collections.OrderedDict()
+        for nameValue in values:
+            name, sep, valueStr = nameValue.partition("=")
+            if name in idDict:
+                parser.error("%s appears multiple times in one ID argument: %s" % (name, option_string))
+            idDict[name] = []
+            for v in valueStr.split("^"):
+                mat = re.search(r"^(\d+)\.\.(\d+)(?::(\d+))?$", v)
+                if mat:
+                    v1 = int(mat.group(1))
+                    v2 = int(mat.group(2))
+                    v3 = mat.group(3)
+                    v3 = int(v3) if v3 else 1
+                    for v in range(v1, v2 + 1, v3):
+                        idDict[name].append(str(v))
+                else:
+                    idDict[name].append(v)
+
+        iterList = [idDict[key] for key in idDict.keys()]
+        idDictList = [collections.OrderedDict(zip(idDict.keys(), valList))
+                      for valList in itertools.product(*iterList)]
+
+        dest.setdefault(namespace._data_type, []).extend(idDictList)
 
 def _config_override(value):
     """This callable is used as "type" for -c option.
@@ -156,7 +231,7 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
     instance of `parser_class`
     """
 
-    parser = parser_class(usage="%(prog)s [global-options] command [command-options]",
+    parser = parser_class(usage="%(prog)s [global-options] subcommand [command-options]",
                           fromfile_prefix_chars=fromfile_prefix_chars,
                           epilog=_epilog,
                           formatter_class=RawDescriptionHelpFormatter,
@@ -171,6 +246,15 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
                              "dot-separated names found in $PYTHON PATH (e.g. lsst.pipe.tasks). "
                              "It should not include module name. This option overrides default "
                              "built-in list of modules. It can be used multiple times."))
+
+    # output options
+    group = parser.add_argument_group("Data selection options")
+    group.add_argument("--type", action="store", dest="_data_type", default=None,
+                       help=("Defines datatype name for next --id options, must be used before "
+                             "any --id option appears"))
+    group.add_argument("--id", nargs="+", dest="id", action=_IdValueAction,
+                       metavar="KEY=VALUE1[^VALUE2[^VALUE3...]",
+                       help="Specifies Data ID, --type option is required before --id.")
 
     # repository options
     group = parser.add_argument_group('Data repository options')
