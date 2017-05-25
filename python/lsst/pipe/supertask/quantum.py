@@ -4,10 +4,10 @@ Quantum describes data used and produced by a particular execution of a
 particular SuperTask, in addition to data description quantum may include
 metadata relevant to that particular execution.
 
-Set of quanta is produced by `SuperTask.define_quanta()` method which
+Set of quanta is produced by `SuperTask.defineQuanta()` method which
 typically splits the space of inputs into the units of size digestible by
 that particular SuperTask. Activators pass individual quanta to each
-invocation of `SuperTask.run_quantum()` method. Activators can also examine
+invocation of `SuperTask.runQuantum()` method. Activators can also examine
 quanta when they build execution chain consisting of multiple SuperTasks.
 
 Quanta are passed from preparation stage to execution stage which typically
@@ -22,16 +22,15 @@ class Quantum(object):
 
     Attributes
     ----------
-    inputs: `dict` of `{datasetType: <list of DataIds>}`
-        All input datasets and DataIds required by this run of the
-        SuperTask.
-    outputs: `dict` of `{datasetType: <list of DataIds>}`
-        All output datasets and DataIds that can be produced by this run
+    inputs: `dict` of `{datasetTypeName: <set of Dataset>}`
+        All input datasets required by this run of the SuperTask.
+    outputs: `dict` of `{datasetTypeName: <set of Dataset>}`
+        All output datasets that can be produced by this run
         of the SuperTask.
     extras: object
         Any additional SuperTask-specific information relevant to this
         run of a SuperTask. This is not examined by Activator but simply
-        passed from `define_quanta` to `run_quantum`.
+        passed from `defineQuanta` to `runQuantum`.
     director: str or None
         Name of a "director" dataset which a primary input or output
         dataset for a SuperTask. Not used currently, kept for future
@@ -40,9 +39,9 @@ class Quantum(object):
 
     Parameters
     ----------
-    inputs: `dict` of `{datasetType: <list of DataIds>}`
+    inputs: `dict` of `{datasetTypeName: <set of Dataset>}`
         Value for `inputs` attribute.
-    outputs: `dict` of `{datasetType: <list of DataIds>}`
+    outputs: `dict` of `{datasetTypeName: <set of Dataset>}`
         Value for `outputs` attribute.
     extras: object, optional
         Value for `extras` attribute. If provided it has to be serializable
