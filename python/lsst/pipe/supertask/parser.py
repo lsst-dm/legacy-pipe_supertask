@@ -76,7 +76,6 @@ class _LogLevelAction(Action):
             setattr(namespace, self.dest, dest)
 
         component, _, levelStr = values.partition("=")
-        print(component, _, levelStr)
         if not levelStr:
             levelStr, component = component, None
         logLevelUpr = levelStr.upper()
@@ -260,6 +259,9 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
 #                        help="Specifies Data ID, --type option is required before --id.")
     group.add_argument("-d", "--data-query", dest="data_query", default=None, metavar="QUERY",
                        help="Data selection query as expected by units database backend.")
+    group.add_argument("--repo-db", dest="repo_db", default=None, metavar="PATH",
+                       help="Location of the RepoDatabase pickle file. By default we are "
+                       "using some in-memory test database generated at run time.")
 
     # repository options
     group = parser.add_argument_group('Data repository options')
