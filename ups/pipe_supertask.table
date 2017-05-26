@@ -1,3 +1,7 @@
+setupRequired(daf_persistence)
+setupRequired(log)
+setupRequired(obs_base)
+setupRequired(pex_config)
 setupRequired(pipe_base)
 
 envPrepend(PYTHONPATH, ${PRODUCT_DIR}/python)

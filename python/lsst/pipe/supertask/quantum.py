@@ -16,6 +16,11 @@ provide (de-)serialization methods for some standard external representation,
 e.g. Pickle.
 """
 
+from __future__ import absolute_import, division, print_function
+
+# "exported" names
+__all__ = ["Quantum"]
+
 
 class Quantum(object):
     """Defines the minimum unit of work that a SuperTask may perform.
