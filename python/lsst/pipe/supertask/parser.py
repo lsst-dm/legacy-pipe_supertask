@@ -23,6 +23,11 @@
 Module defining CmdLineParser class and related methods.
 """
 
+from __future__ import absolute_import, division, print_function
+
+# "exported" names
+__all__ = ["makeParser"]
+
 #--------------------------------
 #  Imports of standard modules --
 #--------------------------------
@@ -36,9 +41,6 @@ import textwrap
 # Imports for other modules --
 #-----------------------------
 import lsst.pipe.base.argumentParser as base_parser
-
-# "exported" names
-__all__ = ['makeParser']
 
 #----------------------------------
 # Local non-exported definitions --
@@ -72,14 +74,15 @@ class _LogLevelAction(Action):
         if dest is None:
             dest = []
             setattr(namespace, self.dest, dest)
-        for componentLevel in values:
-            component, sep, levelStr = componentLevel.partition("=")
-            if not levelStr:
-                levelStr, component = component, None
-            logLevelUpr = levelStr.upper()
-            if logLevelUpr not in self.permittedLevels:
-                parser.error("loglevel=%s not one of %s" % (levelStr, tuple(self.permittedLevels)))
-            dest.append((component, logLevelUpr))
+
+        component, _, levelStr = values.partition("=")
+        print(component, _, levelStr)
+        if not levelStr:
+            levelStr, component = component, None
+        logLevelUpr = levelStr.upper()
+        if logLevelUpr not in self.permittedLevels:
+            parser.error("loglevel=%s not one of %s" % (levelStr, tuple(self.permittedLevels)))
+        dest.append((component, logLevelUpr))
 
 
 class _AppendFlattenAction(Action):
@@ -106,7 +109,7 @@ class _IdValueAction(Action):
     """argparse action callback to process a data ID into a dict
     """
 
-    def __call__(self, parser, namespace, values, option_string):
+    def __call__(self, parser, namespace, values, option_string=None):
         """Parse dataId option values
 
         The option value format is:
@@ -118,7 +121,7 @@ class _IdValueAction(Action):
 
         The cross product is computed for keys with multiple values. For example:
             --id visit 1^2 ccd 1,1^2,2
-        results in the following data ID dicts being appended to namespace.\<argument>.idList:
+        results in the following data ID dicts being appended to namespace.<dest>:
             {"visit":1, "ccd":"1,1"}
             {"visit":2, "ccd":"1,1"}
             {"visit":1, "ccd":"2,2"}
@@ -153,21 +156,21 @@ class _IdValueAction(Action):
 
         idDict = collections.OrderedDict()
         for nameValue in values:
-            name, sep, valueStr = nameValue.partition("=")
+            name, _, valueStr = nameValue.partition("=")
             if name in idDict:
                 parser.error("%s appears multiple times in one ID argument: %s" % (name, option_string))
             idDict[name] = []
-            for v in valueStr.split("^"):
-                mat = re.search(r"^(\d+)\.\.(\d+)(?::(\d+))?$", v)
+            for oneVal in valueStr.split("^"):
+                mat = re.search(r"^(\d+)\.\.(\d+)(?::(\d+))?$", oneVal)
                 if mat:
-                    v1 = int(mat.group(1))
-                    v2 = int(mat.group(2))
-                    v3 = mat.group(3)
-                    v3 = int(v3) if v3 else 1
-                    for v in range(v1, v2 + 1, v3):
-                        idDict[name].append(str(v))
+                    val1 = int(mat.group(1))
+                    val2 = int(mat.group(2))
+                    val3 = mat.group(3)
+                    val3 = int(val3) if val3 else 1
+                    for val in range(val1, val2 + 1, val3):
+                        idDict[name].append(str(val))
                 else:
-                    idDict[name].append(v)
+                    idDict[name].append(oneVal)
 
         iterList = [idDict[key] for key in idDict.keys()]
         idDictList = [collections.OrderedDict(zip(idDict.keys(), valList))
@@ -187,7 +190,7 @@ def _config_file(value):
     return _Override("file", value)
 
 
-_epilog = """\
+_EPILOG = """\
 Notes:
   * --config, --configfile, --id, --loglevel and @file may appear multiple times;
     all values are used, in order left to right
@@ -233,7 +236,7 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
 
     parser = parser_class(usage="%(prog)s [global-options] subcommand [command-options]",
                           fromfile_prefix_chars=fromfile_prefix_chars,
-                          epilog=_epilog,
+                          epilog=_EPILOG,
                           formatter_class=RawDescriptionHelpFormatter,
                           **kwargs)
 
@@ -290,7 +293,7 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
 
     # logging/debug options
     group = parser.add_argument_group("Execution and logging options")
-    group.add_argument("-L", "--loglevel", nargs="+", action=_LogLevelAction, default=[],
+    group.add_argument("-L", "--loglevel", action=_LogLevelAction, default=[],
                        help="logging level; supported levels are [trace|debug|info|warn|error|fatal]",
                        metavar="LEVEL|COMPONENT=LEVEL")
     group.add_argument("--longlog", action="store_true", help="use a more verbose format for the logging")
@@ -348,7 +351,7 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
         subparser = subparsers.add_parser(subcommand,
                                           usage="%(prog)s taskname [options]",
                                           description=description,
-                                          epilog=_epilog,
+                                          epilog=_EPILOG,
                                           formatter_class=RawDescriptionHelpFormatter)
         subparser.set_defaults(config_overrides=[], subparser=subparser)
         subparser.add_argument("taskname",
