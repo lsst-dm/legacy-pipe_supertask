@@ -249,12 +249,14 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
 
     # output options
     group = parser.add_argument_group("Data selection options")
-    group.add_argument("--type", action="store", dest="_data_type", default=None,
-                       help=("Defines datatype name for next --id options, must be used before "
-                             "any --id option appears"))
-    group.add_argument("--id", nargs="+", dest="id", action=_IdValueAction,
-                       metavar="KEY=VALUE1[^VALUE2[^VALUE3...]",
-                       help="Specifies Data ID, --type option is required before --id.")
+#     group.add_argument("--type", action="store", dest="_data_type", default=None,
+#                        help=("Defines datatype name for next --id options, must be used before "
+#                              "any --id option appears"))
+#     group.add_argument("--id", nargs="+", dest="id", action=_IdValueAction,
+#                        metavar="KEY=VALUE1[^VALUE2[^VALUE3...]",
+#                        help="Specifies Data ID, --type option is required before --id.")
+    group.add_argument("-d", "--data-query", dest="data_query", default=None, metavar="QUERY",
+                       help="Data selection query as expected by units database backend.")
 
     # repository options
     group = parser.add_argument_group('Data repository options')
@@ -338,35 +340,28 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
         if subcommand == "show":
             description = textwrap.dedent("""\
                 Display various information about given task. By default all information is
-                displayed, use options to select only subset of the information.
-
-                Note: Specify task name with --help to also see task-specific options""")
+                displayed, use options to select only subset of the information.""")
         else:
             description = textwrap.dedent("""\
-                Execute specified task.
-
-                Note: Specify task name with --help to also see task-specific options""")
+                Execute specified task.""")
 
         subparser = subparsers.add_parser(subcommand,
-                                          add_help=False,
                                           usage="%(prog)s taskname [options]",
                                           description=description,
                                           epilog=_epilog,
                                           formatter_class=RawDescriptionHelpFormatter)
         subparser.set_defaults(config_overrides=[], subparser=subparser)
-        subparser.add_argument("taskname", nargs="?", default=None,
+        subparser.add_argument("taskname",
                                help="Name of the task to execute. This can be a simple name without dots "
                                "which will be found in one of the modules located in the known "
                                "packages or packages specified in --package option. If name contains dots "
                                "it is assumed to be a fully qualified name of a class found in $PYTHONPATH")
-        subparser.add_argument("-h", "--help", action="store_true", dest="do_help", default=False,
-                               help="Show this help message and exit")
-        subparser.add_argument("-c", "--config", dest="config_overrides", nargs="+",
-                               action=_AppendFlattenAction, type=_config_override,
-                               help="Configuration override(s), e.g. -c foo=newfoo bar.baz=3",
+        subparser.add_argument("-c", "--config", dest="config_overrides",
+                               action='append', type=_config_override,
+                               help="Configuration override(s), e.g. -c foo=newfoo -c bar.baz=3",
                                metavar="NAME=VALUE")
-        subparser.add_argument("-C", "--configfile", dest="config_overrides", nargs="+",
-                               action=_AppendFlattenAction, type=_config_file,
+        subparser.add_argument("-C", "--configfile", dest="config_overrides",
+                               action='append', type=_config_file,
                                metavar="PATH", help="Configuration override file(s)")
         subparser.add_argument("--show", metavar="ITEM|ITEM=VALUE", nargs="+", default=[],
                                help="Dump various info to standard output. Possible items are: "
