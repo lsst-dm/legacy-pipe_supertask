@@ -34,6 +34,7 @@ __all__ = ['CmdLineFwk']
 import contextlib
 import multiprocessing
 import os
+import pickle
 import sys
 import traceback
 
@@ -416,22 +417,19 @@ class CmdLineFwk(object):
 
         # to build initial dataset graph we have to collect info about all
         # units and datasets to be used by this pipeline
-        units = {}
         inputs = {}
         outputs = {}
         for taskName, task, config, taskClass in taskList:
-            units.update(task.getUnitClasses())
             taskInputs, taskOutputs = task.getDatasetClasses()
             inputs.update(taskInputs)
             outputs.update(taskOutputs)
 
-        unitClasses = set(units.values())
         inputClasses = set(inputs.values())
         outputClasses = set(outputs.values())
         inputClasses -= outputClasses
 
         # make dataset graph
-        repoGraph = self.makeRepoGraph(unitClasses, inputClasses, outputClasses, args, butler)
+        repoGraph = self.makeRepoGraph(inputClasses, outputClasses, args, butler)
 
         # instantiate all tasks
         plan = []
@@ -453,13 +451,11 @@ class CmdLineFwk(object):
 
         return plan
 
-    def makeRepoGraph(self, unitClasses, inputClasses, ouputClasses, args, butler):
+    def makeRepoGraph(self, inputClasses, ouputClasses, args, butler):
         """Make initial dataset graph instance.
 
         Parameters
         ----------
-        unitClasses : list of type
-            List contains sub-classes (type objects) of UnitClass
         inputClasses : list of type
             List contains sub-classes (type objects) of Dataset which
             should already exist in input repository
@@ -476,8 +472,7 @@ class CmdLineFwk(object):
         RepoGraph instance.
         """
         repodb = self.makeRepodb(args)
-        repoGraph = repodb.makeGraph(UnitClasses=unitClasses,
-                                     where=args.data_query,
+        repoGraph = repodb.makeGraph(where=args.data_query,
                                      NeededDatasets=inputClasses,
                                      FutureDatasets=ouputClasses)
         return repoGraph
@@ -494,8 +489,12 @@ class CmdLineFwk(object):
         -------
         repodb.RepoDatabase instance.
         """
-        # TODO: Backend instance needs to be created in configurable way
-        repodb = repodbTest.makeRepoDatabase()
+        if args.repo_db is not None:
+            with open(args.repo_db, "rb") as fileObj:
+                repodb = pickle.load(fileObj)
+        else:
+            # use some test database
+            repodb = repodbTest.makeRepoDatabase()
         return repodb
 
     def runPipeline(self, plan, butler, args):
