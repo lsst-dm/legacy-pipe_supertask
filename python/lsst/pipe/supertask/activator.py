@@ -59,7 +59,7 @@ stage subclass may not be needed.
 
 from __future__ import absolute_import, division, print_function
 
-__all__ = ["SuperTaskFactory", "ButlerFactory", "ActivatorPre", "ActivatorExec"]
+__all__ = ["ButlerFactory", "ActivatorPre", "ActivatorExec"]
 
 from builtins import object
 
