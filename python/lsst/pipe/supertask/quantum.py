@@ -27,32 +27,32 @@ class Quantum(object):
 
     Attributes
     ----------
-    inputs: `dict` of `{datasetTypeName: <set of Dataset>}`
+    inputs: `dict` of `{DatasetClass: <set of Dataset>}`
         All input datasets required by this run of the SuperTask.
-    outputs: `dict` of `{datasetTypeName: <set of Dataset>}`
+    outputs: `dict` of `{DatasetClass: <set of Dataset>}`
         All output datasets that can be produced by this run
         of the SuperTask.
     extras: object
         Any additional SuperTask-specific information relevant to this
         run of a SuperTask. This is not examined by Activator but simply
         passed from `defineQuanta` to `runQuantum`.
-    director: str or None
-        Name of a "director" dataset which a primary input or output
+    director: DatasetClass or None
+        Class of a "director" dataset which a primary input or output
         dataset for a SuperTask. Not used currently, kept for future
-        extension. If defined then the name must be present in either
-        `inputs` or `outputs` dictionaries.
+        extension. If defined then the class must be present as a key
+        in either `inputs` or `outputs` dictionaries.
 
     Parameters
     ----------
-    inputs: `dict` of `{datasetTypeName: <set of Dataset>}`
+    inputs: `dict` of `{DatasetClass: <set of Dataset>}`
         Value for `inputs` attribute.
-    outputs: `dict` of `{datasetTypeName: <set of Dataset>}`
+    outputs: `dict` of `{DatasetClass: <set of Dataset>}`
         Value for `outputs` attribute.
     extras: object, optional
         Value for `extras` attribute. If provided it has to be serializable
         in the same representation (TBD) as Quantum class itself. Otherwise
         its structure is opaque and only known to a SuperTask.
-    director: str, optional
+    director: DatasetClass, optional
         Value for `director` attribute.
     """
 
