@@ -47,13 +47,13 @@ import lsst.log as lsstLog
 import lsst.obs.base.repodb.tests as repodbTest
 from lsst.pipe.base.task import TaskError
 import lsst.utils
-from .activator import ButlerFactory
 from .configOverrides import ConfigOverrides
+from .graphBuilder import GraphBuilder
 from .parser import makeParser, DEFAULT_INPUT_NAME, DEFAULT_CALIB_NAME, DEFAULT_OUTPUT_NAME
+from .pipeline import Pipeline, TaskDef
+from .taskFactory import TaskFactory
 from .taskLoader import (TaskLoader, KIND_SUPERTASK)
-
-# "exported" names
-__all__ = ['CmdLineFwk']
+from . import util
 
 #----------------------------------
 # Local non-exported definitions --
@@ -67,81 +67,6 @@ log4j.appender.A1.Target=System.err
 log4j.appender.A1.layout=PatternLayout
 log4j.appender.A1.layout.ConversionPattern={}
 """
-
-
-def _printTable(rows, header):
-    """Nice formatting of 2-column table.
-
-    Parameters
-    ----------
-    rows : `list` of `tuple`
-        Each item in the list is a 2-tuple containg left and righ column values
-    header: `tuple` or `None`
-        If `None` then table header are not prined, otherwise it's a 2-tuple
-        with column headings.
-    """
-    if not rows:
-        return
-    width = max(len(x[0]) for x in rows)
-    if header:
-        width = max(width, len(header[0]))
-        print(header[0].ljust(width), header[1])
-        print("".ljust(width, "-"), "".ljust(len(header[1]), "-"))
-    for col1, col2 in rows:
-        print(col1.ljust(width), col2)
-
-
-def _fixPath(defName, path):
-    """!Apply environment variable as default root, if present, and abspath
-
-    @param[in] defName  name of environment variable containing default root path;
-        if the environment variable does not exist then the path is relative
-        to the current working directory
-    @param[in] path     path relative to default root path
-    @return abspath: path that has been expanded, or None if the environment variable does not exist
-        and path is None
-    """
-    defRoot = os.environ.get(defName)
-    if defRoot is None:
-        if path is None:
-            return None
-        return os.path.abspath(path)
-    return os.path.abspath(os.path.join(defRoot, path or ""))
-
-
-@contextlib.contextmanager
-def profile(filename, log=None):
-    """!Context manager for profiling with cProfile
-
-    @param filename     filename to which to write profile (profiling disabled if None or empty)
-    @param log          log object for logging the profile operations
-
-    If profiling is enabled, the context manager returns the cProfile.Profile object (otherwise
-    it returns None), which allows additional control over profiling.  You can obtain this using
-    the "as" clause, e.g.:
-
-        with profile(filename) as prof:
-            runYourCodeHere()
-
-    The output cumulative profile can be printed with a command-line like:
-
-        python -c 'import pstats; pstats.Stats("<filename>").sort_stats("cumtime").print_stats(30)'
-    """
-    if not filename:
-        # Nothing to do
-        yield
-        return
-    from cProfile import Profile
-
-    prof = Profile()
-    if log is not None:
-        log.info("Enabling cProfile profiling")
-    prof.enable()
-    yield prof
-    prof.disable()
-    prof.dump_stats(filename)
-    if log is not None:
-        log.info("cProfile stats written to %s" % filename)
 
 
 class _MPMap(object):
@@ -176,7 +101,7 @@ class _MPMap(object):
         return result.get(self.timeout)
 
 
-class BFactory(ButlerFactory):
+class BFactory(object):
     """Implement ButlerFactory using command line arguments.
 
     Parameters
@@ -209,11 +134,9 @@ class BFactory(ButlerFactory):
 
 
 class CmdLineFwk(object):
-    """
-    CmdLineActivator implements an activator for SuperTasks which executes
-    tasks from command line.
+    """SuperTask framework which executes tasks from command line.
 
-    In addition to executing taks this activator provides additional methods
+    In addition to executing tasks this activator provides additional methods
     for task management like dumping configuration or execution chain.
     """
 
@@ -245,27 +168,34 @@ class CmdLineFwk(object):
         # First thing to do is to setup logging.
         self.configLog(args.longlog, args.loglevel)
 
+        self.taskLoader = TaskLoader(args.packages)
+        self.taskFactory = TaskFactory(self.taskLoader)
+
         if args.subcommand == "list":
             # just dump some info about where things may be found
-            return self.doList(args.packages, args.show, args.show_headers)
+            return self.doList(args.show, args.show_headers)
 
         # update all locations
         self._parseDirectories(args)
+
+        # make butler instance
+        bfactory = BFactory(args)
+        butler = bfactory.getButler()
 
         # make pipeline out of command line arguments
         pipeline = self.makePipeline(args)
         if pipeline is None:
             return 2
 
-        # make butler instance
-        bfactory = BFactory(args)
-        butler = bfactory.getButler()
+        # make RepoDatabsae instance
+        repoDb = self.makeRepodb(args)
 
         # make execution plan (a.k.a. DAG) for pipeline
-        plan = self.makeExecuionGraph(pipeline, args, butler)
+        graphBuilder = GraphBuilder(self.taskFactory, butler, repoDb, args.data_query)
+        graph = graphBuilder.makeGraph(pipeline)
 
         # execute
-        return self.runPipeline(plan, butler, args)
+        return self.runPipeline(graph, butler, args)
 
     @staticmethod
     def configLog(longlog, logLevels):
@@ -295,21 +225,16 @@ class CmdLineFwk(object):
                 logger = lsstLog.Log.getLogger(component or "")
                 logger.setLevel(level)
 
-    def doList(self, packages, show, show_headers):
+    def doList(self, show, show_headers):
         """Implementation of the "list" command.
 
         Parameters
         ----------
-        packages : list of str
-            List of packages to look for tasks
         show : `list` of `str`
             List of items to show.
         show_headers : `bool`
             True to display additional headers
         """
-
-        # make task loader
-        loader = TaskLoader(packages)
 
         if not show:
             show = ["super-tasks"]
@@ -319,12 +244,12 @@ class CmdLineFwk(object):
                 print()
                 print("Modules search path")
                 print("-------------------")
-            for pkg in sorted(loader.packages):
+            for pkg in sorted(self.taskLoader.packages):
                 print(pkg)
 
         if "modules" in show:
             try:
-                modules = loader.modules()
+                modules = self.taskLoader.modules()
             except ImportError as exc:
                 print("Failed to import package, check --package option or $PYTHONPATH:", exc,
                       file=sys.stderr)
@@ -334,11 +259,11 @@ class CmdLineFwk(object):
             if show_headers:
                 print()
                 headers = ("Module or package name", "Type    ")
-            _printTable(modules, headers)
+            util.printTable(modules, headers)
 
         if "tasks" in show or "super-tasks" in show:
             try:
-                tasks = loader.tasks()
+                tasks = self.taskLoader.tasks()
             except ImportError as exc:
                 print("Failed to import package, check --packages option or PYTHONPATH:", exc,
                       file=sys.stderr)
@@ -353,7 +278,7 @@ class CmdLineFwk(object):
             if show_headers:
                 print()
                 headers = ("Task class name", "Kind     ")
-            _printTable(tasks, headers)
+            util.printTable(tasks, headers)
 
     def makePipeline(self, args):
         """Construct pipeline from command line arguments
@@ -362,6 +287,10 @@ class CmdLineFwk(object):
         ----------
         args : argparse.Namespace
             Parsed command line
+
+        Returns
+        -------
+        `Pipeline` instance.
         """
 
         # need camera/package name to find overrides
@@ -369,137 +298,51 @@ class CmdLineFwk(object):
         camera = mapperClass.getCameraName()
         obsPkg = mapperClass.getPackageName()
 
-        # make task loader
-        loader = TaskLoader(args.packages)
-
         # for now parser supports just a single task on command line
+        tasks = [(args.taskname, args.config_overrides)]
 
-        # load task class
-        taskClass, taskName, taskKind = loader.loadTaskClass(args.taskname)
-        if taskClass is None:
-            print("Failed to load task `{}'".format(args.taskname))
-            return None
-        if taskKind != KIND_SUPERTASK:
-            print("Task `{}' is not a SuperTask".format(taskName))
-            return None
+        pipeline = Pipeline()
+        for taskName, configOverrides in tasks:
 
-        # package config overrides
-        overrides = ConfigOverrides()
+            # load task class
+            try:
+                taskClass, taskName = self.taskFactory.loadTaskClass(taskName)
+            except ImportError:
+                print("Failed to load task `{}'".format(taskName))
+                return None
 
-        # camera/package overrides
-        configName = taskClass._DefaultName
-        obsPkgDir = lsst.utils.getPackageDir(obsPkg)
-        fileName = configName + ".py"
-        for filePath in (
-            os.path.join(obsPkgDir, "config", fileName),
-            os.path.join(obsPkgDir, "config", camera, fileName),
-        ):
-            if os.path.exists(filePath):
-                lsstLog.info("Loading config overrride file %r", filePath)
-                overrides.addFileOverride(filePath)
-            else:
-                lsstLog.debug("Config override file does not exist: %r", filePath)
+            # package all config overrides into a single object
+            overrides = ConfigOverrides()
 
-        # command line overrides
-        for override in args.config_overrides:
-            if override.type == "override":
-                key, sep, val = override.value.partition('=')
-                overrides.addValueOverride(key, val)
-            elif override.type == "file":
-                overrides.addFileOverride(override.value)
+            # camera/package overrides
+            configName = taskClass._DefaultName
+            obsPkgDir = lsst.utils.getPackageDir(obsPkg)
+            fileName = configName + ".py"
+            for filePath in (
+                os.path.join(obsPkgDir, "config", fileName),
+                os.path.join(obsPkgDir, "config", camera, fileName),
+            ):
+                if os.path.exists(filePath):
+                    lsstLog.info("Loading config overrride file %r", filePath)
+                    overrides.addFileOverride(filePath)
+                else:
+                    lsstLog.debug("Config override file does not exist: %r", filePath)
 
-        # make config instance with defaults and overrides
-        config = taskClass.ConfigClass()
-        overrides.applyTo(config)
+            # command line overrides
+            for override in configOverrides:
+                if override.type == "override":
+                    key, sep, val = override.value.partition('=')
+                    overrides.addValueOverride(key, val)
+                elif override.type == "file":
+                    overrides.addFileOverride(override.value)
 
-        return [(taskName, config, taskClass)]
+            # make config instance with defaults and overrides
+            config = taskClass.ConfigClass()
+            overrides.applyTo(config)
 
-    def makeExecuionGraph(self, pipeline, args, butler):
-        """Create execution plan for a pipeline.
+            pipeline.append(TaskDef(taskName, config, taskClass))
 
-        Parameters
-        ----------
-        pipeline : list of tuples
-            Each tuple is (taskName, config, taskClass)
-        args : argparse.Namespace
-            Parsed command line
-        butler : Butler
-            data butler instance
-
-        Returns
-        -------
-        List of tuples (taskName, taskClass, config, quanta).
-        """
-
-        # make all task instances
-        taskList = []
-        for taskName, config, taskClass in pipeline:
-            task = taskClass(config=config, butler=butler)
-            taskList += [(taskName, task, config, taskClass)]
-
-        # to build initial dataset graph we have to collect info about all
-        # units and datasets to be used by this pipeline
-        inputs = {}
-        outputs = {}
-        for taskName, task, config, taskClass in taskList:
-            taskInputs, taskOutputs = task.getDatasetClasses()
-            if taskInputs:
-                inputs.update(taskInputs)
-            if taskOutputs:
-                outputs.update(taskOutputs)
-
-        inputClasses = set(inputs.values())
-        outputClasses = set(outputs.values())
-        inputClasses -= outputClasses
-
-        # make dataset graph
-        repoGraph = self.makeRepoGraph(inputClasses, outputClasses, args, butler)
-
-        # instantiate all tasks
-        plan = []
-        for taskName, task, config, taskClass in taskList:
-
-            # call task to make its quanta
-            quanta = task.defineQuanta(repoGraph, butler)
-
-            # undefined yet: dataset graph needs to be updated with the
-            # outputs produced by this task. We can do it in the task
-            # itself or we can do it here by scannint quanta outputs
-            # and adding them to dataset graph
-#             for quantum in quanta:
-#                 for dsTypeName, datasets in quantum.outputs.items():
-#                     existing = repoGraph.datasets.setdefault(dsTypeName, set())
-#                     existing |= datasets
-
-            plan.append((taskName, taskClass, config, quanta))
-
-        return plan
-
-    def makeRepoGraph(self, inputClasses, ouputClasses, args, butler):
-        """Make initial dataset graph instance.
-
-        Parameters
-        ----------
-        inputClasses : list of type
-            List contains sub-classes (type objects) of Dataset which
-            should already exist in input repository
-        outputClasses : list of type
-            List contains sub-classes (type objects) of Dataset which
-            will be created by tasks
-        args : argparse.Namespace
-            Parsed command line
-        butler : DataButler
-            Data butler instance
-
-        Returns
-        -------
-        RepoGraph instance.
-        """
-        repodb = self.makeRepodb(args)
-        repoGraph = repodb.makeGraph(where=args.data_query,
-                                     NeededDatasets=inputClasses,
-                                     FutureDatasets=ouputClasses)
-        return repoGraph
+        return pipeline
 
     def makeRepodb(self, args):
         """Make repodb instance.
@@ -526,7 +369,7 @@ class CmdLineFwk(object):
         Parameters
         ----------
         plan : list of tuples
-            Each tuple is (taskName, taskClass, config, quanta).
+            Each tuple is (taskDef, quanta).
         butler : Butler
             data butler instance
         args : argparse.Namespace
@@ -537,13 +380,13 @@ class CmdLineFwk(object):
         numProc = args.processes
 
         # pre-flight check
-        for taskName, taskClass, config, quanta in plan:
-            task = taskClass(config=config, butler=butler)
+        for taskDef, quanta in plan:
+            task = self.taskFactory.makeTask(taskDef.taskClass, taskDef.config, None, butler)
             if not self.precall(task, butler, args):
                 # non-zero means failure
                 return 1
 
-            if numProc > 1 and not taskClass.canMultiprocess:
+            if numProc > 1 and not taskDef.taskClass.canMultiprocess:
                 lsstLog.warn("Task %s does not support multiprocessing; using one process", taskName)
                 numProc = 1
 
@@ -558,13 +401,13 @@ class CmdLineFwk(object):
             mapFunc = lambda func, iterable: list(map(func, iterable))
 
         # tasks are executed sequentially but quanta can run in parallel
-        for taskName, taskClass, config, quanta in plan:
-            task = taskClass(config=config, butler=butler)
-
-            target_list = [(taskClass, config, quantum, butler) for quantum in quanta]
+        for taskDef, quanta in plan:
+            # targets for map function
+            target_list = [(taskDef.taskClass, taskDef.config, quantum, butler)
+                           for quantum in quanta]
             # call task on each argument in a list
             profile_name = getattr(args, "profile", None)
-            with profile(profile_name, lsstLog):
+            with util.profile(profile_name, lsstLog):
                 mapFunc(self._executeSuperTask, target_list)
 
     def _executeSuperTask(self, target):
@@ -583,7 +426,7 @@ class CmdLineFwk(object):
 #                 lsstLog.MDC("LABEL", str([ref.dataId for ref in dataRef if hasattr(ref, "dataId")]))
 
         # make task instance
-        task = taskClass(config=config, butler=butler)
+        task = self.taskFactory.makeTask(taskClass, config, None, butler)
 
         # Call task runQuantum() method and wrap it to catch exceptions that
         # don't inherit from Exception. Such exceptions aren't caught by
@@ -658,12 +501,12 @@ class CmdLineFwk(object):
         Modifications are made to the 'namespace' object in-place.
         """
 
-        namespace.input = _fixPath(DEFAULT_INPUT_NAME, namespace.inputRepo)
-        namespace.calib = _fixPath(DEFAULT_CALIB_NAME, namespace.calibRepo)
+        namespace.input = util.fixPath(DEFAULT_INPUT_NAME, namespace.inputRepo)
+        namespace.calib = util.fixPath(DEFAULT_CALIB_NAME, namespace.calibRepo)
 
         # If an output directory is specified, process it and assign it to the namespace
         if namespace.outputRepo:
-            namespace.output = _fixPath(DEFAULT_OUTPUT_NAME, namespace.outputRepo)
+            namespace.output = util.fixPath(DEFAULT_OUTPUT_NAME, namespace.outputRepo)
         else:
             namespace.output = None
 
