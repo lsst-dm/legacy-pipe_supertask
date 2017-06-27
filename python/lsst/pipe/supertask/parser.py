@@ -103,6 +103,39 @@ class _AppendFlattenAction(Action):
             setattr(namespace, self.dest, dest)
         dest += values
 
+
+class _TaskConfigAction(Action):
+    """Action class which associates config overrides with tasks.
+
+    Adds overrides to a list which matches the size of the task list.
+    This class needs to know the name of the (attribute for) task list,
+    there is no easy way to pass it during construction, so for now
+    that name is hard-coded in taskListName attribute.
+    """
+    taskListName = "taskname"   # namespace attribute which holds task list
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        """Re-implementation of the base class method.
+
+        See `argparse.Action` documentation for parameter description.
+        """
+        # make sure that at least one task name already there
+        taskList = getattr(namespace, self.taskListName)
+        if not taskList:
+            parser.error("option %s must follow task name" % option_string)
+
+        # get or make config list
+        dest = getattr(namespace, self.dest)
+        if dest is None:
+            dest = []
+            setattr(namespace, self.dest, dest)
+
+        # extend config list to the same length as task list
+        dest.extend([None] * (len(taskList) - len(dest)))
+        if dest[-1] is None:
+            dest[-1] = []
+        dest[-1].append(values)
+
 # copied with small mods from pipe.base.argumentParser
 class _IdValueAction(Action):
     """argparse action callback to process a data ID into a dict
@@ -191,15 +224,12 @@ def _config_file(value):
 
 _EPILOG = """\
 Notes:
-  * --config, --configfile, --id, --loglevel and @file may appear multiple times;
-    all values are used, in order left to right
+  * --task, --config, --configfile, --id, --loglevel and @file may appear
+    multiple times; all values are used, in order left to right
   * @file reads command-line options from the specified file:
     * data may be distributed among multiple lines (e.g. one option per line)
     * data after # is treated as a comment and ignored
     * blank lines and lines starting with # are ignored
-  * To specify multiple values for an option, do not use = after the option name:
-    * right: --configfile foo bar
-    * wrong: --configfile=foo bar
 """
 
 #------------------------
@@ -223,8 +253,8 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
     fromfile_prefix_chars : `str`, optional
         Prefix for arguments to be used as options files (default: `@`)
     parser_class : `type`, optional
-        Specifiest the class of the argument parser, by default
-        `argparse.ArgumentParser` is used.
+        Specifies the class of the argument parser, by default
+        `ArgumentParser` is used.
     kwargs : extra keyword arguments
         Passed directly to `parser_class` constructor
 
@@ -323,9 +353,9 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
     subparser = subparsers.add_parser("list",
                                       usage="%(prog)s [options]",
                                       description="Display information about tasks and where they are "
-                                      "found. If none of the optios are specified then --super-tasks "
+                                      "found. If none of the options are specified then --super-tasks "
                                       "is used by default")
-    subparser.set_defaults(show=[], subparser=subparser)
+    subparser.set_defaults(subparser=subparser)
     subparser.add_argument("-P", "--packages", dest="show", action="append_const", const="packages",
                            help="Shows list of the packages to search for tasks")
     subparser.add_argument("-m", "--modules", dest="show", action="append_const", const='modules',
@@ -344,37 +374,49 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
 
         if subcommand == "show":
             description = textwrap.dedent("""\
-                Display various information about given task. By default all information is
+                Display various information about given pipeline. By default all information is
                 displayed, use options to select only subset of the information.""")
         else:
             description = textwrap.dedent("""\
-                Execute specified task.""")
+                Execute specified pipeline.""")
 
         subparser = subparsers.add_parser(subcommand,
-                                          usage="%(prog)s taskname [options]",
+                                          usage="`%(prog)s -t taskname [options] [-t taskname ...]' or "
+                                          "`%(prog)s -e path [options]'",
                                           description=description,
                                           epilog=_EPILOG,
                                           formatter_class=RawDescriptionHelpFormatter)
-        subparser.set_defaults(config_overrides=[], subparser=subparser)
-        subparser.add_argument("taskname",
-                               help="Name of the task to execute. This can be a simple name without dots "
-                               "which will be found in one of the modules located in the known "
-                               "packages or packages specified in --package option. If name contains dots "
-                               "it is assumed to be a fully qualified name of a class found in $PYTHONPATH")
+        subparser.set_defaults(subparser=subparser)
+        excl_group = subparser.add_mutually_exclusive_group(required=True)
+        excl_group.add_argument("-e", "--pipeline", dest="pipeline",
+                                help="Location of a serialized pipeline definition (pickle file)."
+                                " This option cannot be used together with task names.",
+                                metavar="PATH")
+        excl_group.add_argument("-t", "--task", dest="taskname", action='append',
+                                help="Names of the tasks to execute. It can be a simple name without dots "
+                                "which will be found in one of the modules located in the known "
+                                "packages or packages specified in --package option. If name contains dots "
+                                "it is assumed to be a fully qualified name of a class found in $PYTHONPATH "
+                                "or in one of the packages specified in --package option.")
         subparser.add_argument("-c", "--config", dest="config_overrides",
-                               action='append', type=_config_override,
-                               help="Configuration override(s), e.g. -c foo=newfoo -c bar.baz=3",
-                               metavar="NAME=VALUE")
+                               action=_TaskConfigAction, type=_config_override, metavar="NAME=VALUE",
+                               help="Configuration override(s), e.g. -c foo=newfoo -c bar.baz=3. "
+                               "This option applies to a preceding task.")
         subparser.add_argument("-C", "--configfile", dest="config_overrides",
-                               action='append', type=_config_file,
-                               metavar="PATH", help="Configuration override file(s)")
-        subparser.add_argument("--show", metavar="ITEM|ITEM=VALUE", nargs="+", default=[],
+                               action=_TaskConfigAction, type=_config_file, metavar="PATH",
+                               help="Configuration override file(s). "
+                               "This option applies to a preceding task.")
+        subparser.add_argument("--save-pipeline", dest="save_pipeline",
+                               help="Location for storing a serialized pipeline definition (pickle file).",
+                               metavar="PATH")
+        subparser.add_argument("--show", metavar="ITEM|ITEM=VALUE", action="append", default=[],
                                help="Dump various info to standard output. Possible items are: "
-                               "`config', `config=<PATTERN>' or `config=<PATTERN>:NOIGNORECASE' "
+                               "`config', `config=[Task/]<PATTERN>' or `config=[Task::]<PATTERN>:NOIGNORECASE' "
                                "to dump configuration possibly matching given pattern; "
                                "`history=<FIELD>' to dump configuration history for a field, "
-                               "field name is specified as Task.SubTask.Field; "
-                               "`data' to show information about data in butler; "
+                               "field name is specified as [Task::][SubTask.]Field; "
+                               "`pipeline' to show pipeline composition; "
+                               "`graph' to show information about quanta; "
                                "`tasks' to show task composition.")
 
     return parser
