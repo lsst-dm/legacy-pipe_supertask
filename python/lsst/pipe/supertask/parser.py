@@ -356,7 +356,7 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
                                       "found. If none of the options are specified then --super-tasks "
                                       "is used by default")
     subparser.set_defaults(subparser=subparser)
-    subparser.add_argument("-P", "--packages", dest="show", action="append_const", const="packages",
+    subparser.add_argument("-p", "--packages", dest="show", action="append_const", const="packages",
                            help="Shows list of the packages to search for tasks")
     subparser.add_argument("-m", "--modules", dest="show", action="append_const", const='modules',
                            help="Shows list of all modules existing in current list of packages")
@@ -382,13 +382,13 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
 
         subparser = subparsers.add_parser(subcommand,
                                           usage="`%(prog)s -t taskname [options] [-t taskname ...]' or "
-                                          "`%(prog)s -e path [options]'",
+                                          "`%(prog)s -p path [options]'",
                                           description=description,
                                           epilog=_EPILOG,
                                           formatter_class=RawDescriptionHelpFormatter)
         subparser.set_defaults(subparser=subparser)
         excl_group = subparser.add_mutually_exclusive_group(required=True)
-        excl_group.add_argument("-e", "--pipeline", dest="pipeline",
+        excl_group.add_argument("-p", "--pipeline", dest="pipeline",
                                 help="Location of a serialized pipeline definition (pickle file)."
                                 " This option cannot be used together with task names.",
                                 metavar="PATH")
