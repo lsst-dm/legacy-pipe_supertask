@@ -65,5 +65,6 @@ target/
 .sconsign.dblite
 python/lsst/pipe/supertask/version.py
 ups/*.cfgc
-bin/cmdLineActivator
+bin/stac
 .idea/
+tests/.tests/

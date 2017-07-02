@@ -65,3 +65,12 @@ class Quantum(object):
         # check consistency
         if director and director not in inputs and director not in outputs:
             raise ValueError("Director dataset ({}) is not in inputs or outputs".format(director))
+
+    def __str__(self):
+        res = "Quantum(inputs={}, outputs={}".format(self.inputs, self.outputs)
+        if self.extras:
+            res += ", extras={}".format(self.extras)
+        if self.director:
+            res += ", director={}".format(self.director)
+        res += ")"
+        return res
