@@ -41,7 +41,7 @@ from .pipeline import Pipeline
 #----------------------------------
 
 def _loadTaskClass(taskDef, taskFactory):
-    """Import task class it necessary.
+    """Import task class if necessary.
 
     Raises
     ------
@@ -163,7 +163,7 @@ def orderPipeline(pipeline, taskFactory=None):
     provided.
     """
 
-    # This is a modified version of Khan's algorithm that preserveds order
+    # This is a modified version of Kahn's algorithm that preserves order
 
     # build mapping of the tasks to their inputs and outputs
     inputs = {}   # maps task index to its input DatasetType names

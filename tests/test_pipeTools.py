@@ -29,7 +29,7 @@ from collections import namedtuple
 
 import lsst.pex.config as pexConfig
 from lsst.pipe import supertask
-import lsst.pipe.supertask.pipelineTools as pipeTools
+from lsst.pipe.supertask import pipeTools
 import lsst.utils.tests
 
 # mock for actual dataset type
