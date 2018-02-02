@@ -30,20 +30,54 @@ __all__ = ["isPipelineOrdered"]
 #--------------------------------
 #  Imports of standard modules --
 #--------------------------------
-import sys
 
 #-----------------------------
 # Imports for other modules --
 #-----------------------------
-from .config import InputDatasetConfig, OutputDatasetConfig
+from .pipeline import Pipeline
 
 #----------------------------------
 # Local non-exported definitions --
 #----------------------------------
 
+def _loadTaskClass(taskDef, taskFactory):
+    """Import task class it necessary.
+
+    Raises
+    ------
+    `ImportError` is raised when task class cannot be imported.
+    `MissingTaskFactoryError` is raised when TaskFactory is needed but not provided.
+    """
+    taskClass = taskDef.taskClass
+    if not taskClass:
+        if not taskFactory:
+            raise MissingTaskFactoryError("Task class is not defined but task "
+                                          "factory instance is not provided")
+        taskClass = taskFactory.loadTaskClass(taskDef.taskName)
+    return taskClass
+
 #------------------------
 # Exported definitions --
 #------------------------
+
+
+class MissingTaskFactoryError(Exception):
+    """Exception raised when client fails to provide TaskFactory instance.
+    """
+    pass
+
+
+class DuplicateOutputError(Exception):
+    """Exception raised when Pipeline has more than one task for the same
+    output.
+    """
+    pass
+
+
+class PipelineDataCycleError(Exception):
+    """Exception raised when Pipeline has data dependency cycle.
+    """
+    pass
 
 
 def isPipelineOrdered(pipeline, taskFactory=None):
@@ -67,30 +101,25 @@ def isPipelineOrdered(pipeline, taskFactory=None):
     Raises
     ------
     `ImportError` is raised when task class cannot be imported.
-    `ValueError` is raised when there is more than one producer for a dataset
-    type.
-    `ValueError` is also raised when TaskFactory is needed but not provided.
+    `DuplicateOutputError` is raised when there is more than one producer for a
+    dataset type.
+    `MissingTaskFactoryError` is raised when TaskFactory is needed but not
+    provided.
     """
     # Build a map of DatasetType name to producer's index in a pipeline
     producerIndex = {}
     for idx, taskDef in enumerate(pipeline):
 
         # we will need task class for next operations, make sure it is loaded
-        if not taskDef.taskClass:
-            if not taskFactory:
-                raise ValueError("Task class is not defined but task factory "
-                                 "instance is not provided")
-            taskDef.taskClass = taskFactory.loadTaskClass(taskDef.taskName)
+        taskDef.taskClass = _loadTaskClass(taskDef, taskFactory)
 
         # get task output DatasetTypes, this can only be done via class method
         outputs = taskDef.taskClass.getOutputDatasetTypes(taskDef.config)
         for dsType in outputs.values():
             if dsType.name in producerIndex:
-                raise ValueError("DatasetType `{}' appears more than once as"
-                                 " output".format(dsType.name))
+                raise DuplicateOutputError("DatasetType `{}' appears more than "
+                                           "once as" " output".format(dsType.name))
             producerIndex[dsType.name] = idx
-
-    print(producerIndex)
 
     # check all inputs that are also someone's outputs
     for idx, taskDef in enumerate(pipeline):
@@ -105,3 +134,92 @@ def isPipelineOrdered(pipeline, taskFactory=None):
                 return False
 
     return True
+
+
+def orderPipeline(pipeline, taskFactory=None):
+    """Re-order tasks in pipeline to satisfy data dependencies.
+
+    When possible new ordering keeps original relative order of the tasks.
+
+    Parameters
+    ----------
+    pipeline : `pipe.supertask.Pipeline`
+        Pipeline description.
+    taskFactory: `pipe.supertask.TaskFactory`, optional
+        Instance of an object which knows how to import task classes. It is only
+        used if pipeline task definitions do not define task classes.
+
+    Returns
+    -------
+    Correctly ordered pipeline (`pipe.supertask.Pipeline` instance).
+
+    Raises
+    ------
+    `ImportError` is raised when task class cannot be imported.
+    `DuplicateOutputError` is raised when there is more than one producer for a
+    dataset type.
+    `PipelineDataCycleError` is also raised when pipeline has dependency cycles.
+    `MissingTaskFactoryError` is raised when TaskFactory is needed but not
+    provided.
+    """
+
+    # This is a modified version of Khan's algorithm that preserveds order
+
+    # build mapping of the tasks to their inputs and outputs
+    inputs = {}   # maps task index to its input DatasetType names
+    outputs = {}  # maps task index to its output DatasetType names
+    allInputs = set()   # all inputs of all tasks
+    allOutputs = set()  # all outputs of all tasks
+    for idx, taskDef in enumerate(pipeline):
+
+        # we will need task class for next operations, make sure it is loaded
+        taskClass = _loadTaskClass(taskDef, taskFactory)
+
+        # task outputs
+        dsMap = taskClass.getOutputDatasetTypes(taskDef.config)
+        for dsType in dsMap.values():
+            if dsType.name in allOutputs:
+                raise DuplicateOutputError("DatasetType `{}' appears more than "
+                                           "once as" " output".format(dsType.name))
+        outputs[idx] = set(dsType.name for dsType in dsMap.values())
+        allOutputs.update(outputs[idx])
+
+        # task inputs
+        dsMap = taskClass.getInputDatasetTypes(taskDef.config)
+        inputs[idx] = set(dsType.name for dsType in dsMap.values())
+        allInputs.update(inputs[idx])
+
+    # for simplicity add pseudo-node which is a producer for all pre-existing
+    # inputs, its index is -1
+    preExisting = allInputs - allOutputs
+    outputs[-1] = preExisting
+
+    # Set of nodes with no incoming edges, initially set to pseudo-node
+    queue = [-1]
+    result = []
+    while queue:
+
+        # move to final list, drop -1
+        idx = queue.pop(0)
+        if idx >= 0:
+            result.append(idx)
+
+        # remove task outputs from other tasks inputs
+        thisTaskOutputs = outputs.get(idx, set())
+        for taskInputs in inputs.values():
+            taskInputs -= thisTaskOutputs
+
+        # find all nodes with no incoming edges and move them to the queue
+        topNodes = [key for key, value in inputs.items() if not value]
+        queue += topNodes
+        for key in topNodes:
+            del inputs[key]
+
+        # keep queue ordered
+        queue.sort()
+
+    # if there is something left it means cycles
+    if inputs:
+        raise PipelineDataCycleError("Pipeline has data cycles")
+
+    return Pipeline(pipeline[idx] for idx in result)

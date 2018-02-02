@@ -28,66 +28,97 @@ import pickle
 from collections import namedtuple
 
 import lsst.pex.config as pexConfig
-from lsst.pipe.supertask import (Pipeline, SuperTask, TaskDef,
-                                 isPipelineOrdered,
-                                 SuperTaskConfig, InputDatasetConfig,
-                                 OutputDatasetConfig)
+from lsst.pipe import supertask
+import lsst.pipe.supertask.pipelineTools as pipeTools
 import lsst.utils.tests
 
 # mock for actual dataset type
 DS = namedtuple("DS", "name units")
+
+
+# This method is used by SuperTask to instanciate DatasetType, normally this
+# should come from some other module but we have not defined that yet, so I
+# stick a trivial (mock) implementation here.
 def makeDatasetType(dsConfig):
     return DS(name=dsConfig.name, units=dsConfig.units)
 
 
-class AddConfig(SuperTaskConfig):
-    input = pexConfig.ConfigField(dtype=InputDatasetConfig,
+class ExampleSuperTaskConfig(supertask.SuperTaskConfig):
+    input1 = pexConfig.ConfigField(dtype=supertask.InputDatasetConfig,
                                   doc="Input for this task")
-    output = pexConfig.ConfigField(dtype=OutputDatasetConfig,
+    input2 = pexConfig.ConfigField(dtype=supertask.InputDatasetConfig,
+                                  doc="Input for this task")
+    output1 = pexConfig.ConfigField(dtype=supertask.OutputDatasetConfig,
+                                   doc="Output for this task")
+    output2 = pexConfig.ConfigField(dtype=supertask.OutputDatasetConfig,
                                    doc="Output for this task")
 
-    def setDefaults(self):
-        self.input.name = "raw"
-        self.input.units = ["Visit", "Sensor"]
-        self.output.name = "addraw"
-        self.output.units = ["Visit", "Sensor"]
+
+def _makeConfig(inputName, outputName):
+    """Factory method for config instances
+
+    inputName and outputName can be either string or tuple of strings
+    with two items max.
+    """
+    config = ExampleSuperTaskConfig()
+    if isinstance(inputName, tuple):
+        config.input1.name = inputName[0]
+        config.input2.name = inputName[1] if len(inputName) > 1 else ""
+    else:
+        config.input1.name = inputName
+
+    if isinstance(outputName, tuple):
+        config.output1.name = outputName[0]
+        config.output2.name = outputName[1] if len(outputName) > 1 else ""
+    else:
+        config.output1.name = outputName
+
+    return config
 
 
-class AddTask(SuperTask):
-    ConfigClass = AddConfig
+class ExampleSuperTask(supertask.SuperTask):
+    ConfigClass = ExampleSuperTaskConfig
 
     @classmethod
     def getInputDatasetTypes(cls, config):
-        return {"input": makeDatasetType(config.input)}
+        types = {"input1": makeDatasetType(config.input1)}
+        if config.input2.name:
+            types["input2"] = makeDatasetType(config.input2)
+        return types
 
     @classmethod
     def getOutputDatasetTypes(cls, config):
-        return {"output": makeDatasetType(config.output)}
+        types = {"output1": makeDatasetType(config.output1)}
+        if config.output2.name:
+            types["output2"] = makeDatasetType(config.output2)
+        return types
 
 
-class MultConfig(SuperTaskConfig):
-    input = pexConfig.ConfigField(dtype=InputDatasetConfig,
-                                  doc="Input for this task")
-    output = pexConfig.ConfigField(dtype=OutputDatasetConfig,
-                                   doc="Output for this task")
+def _makePipeline(tasks):
+    """Generate Pipeline instance.
 
-    def setDefaults(self):
-        self.input.name = "addraw"
-        self.input.units = ["Visit", "Sensor"]
-        self.output.name = "mulraw"
-        self.output.units = ["Visit", "Sensor"]
+    Parameters
+    ----------
+    tasks : list of tuples
+        Each tuple in the list has 3 or 4 items:
+        - input DatasetType name(s), string or tuple of strings
+        - output DatasetType name(s), string or tuple of strings
+        - task label, string
+        - optional task class object, can be None
 
-
-class MultTask(SuperTask):
-    ConfigClass = MultConfig
-
-    @classmethod
-    def getInputDatasetTypes(cls, config):
-        return {"input": makeDatasetType(config.input)}
-
-    @classmethod
-    def getOutputDatasetTypes(cls, config):
-        return {"output": makeDatasetType(config.output)}
+    Returns
+    -------
+    Pipeline instance
+    """
+    pipe = supertask.Pipeline()
+    for task in tasks:
+        inputs = task[0]
+        outputs = task[1]
+        label = task[2]
+        klass = task[3] if len(task) > 3 else ExampleSuperTask
+        config = _makeConfig(inputs, outputs)
+        pipe.append(supertask.TaskDef("ExampleSuperTask", config, klass, label))
+    return pipe
 
 
 class PipelineToolsTestCase(unittest.TestCase):
@@ -101,32 +132,136 @@ class PipelineToolsTestCase(unittest.TestCase):
         pass
 
     def testIsOrdered(self):
-        """Tests for isPipelineOrdered method
+        """Tests for pipeTools.isPipelineOrdered method
         """
-        pipeline = Pipeline([TaskDef("lsst.pipe.supertask.tests.AddTask", AddConfig(), AddTask),
-                             TaskDef("lsst.pipe.supertask.tests.MultTask", MultConfig(), MultTask)])
-        self.assertTrue(isPipelineOrdered(pipeline))
+        pipeline = _makePipeline([("A", "B", "task1"),
+                                  ("B", "C", "task2")])
+        self.assertTrue(pipeTools.isPipelineOrdered(pipeline))
 
-        pipeline = Pipeline([TaskDef("lsst.pipe.supertask.tests.MultTask", MultConfig(), MultTask),
-                             TaskDef("lsst.pipe.supertask.tests.AddTask", AddConfig(), AddTask)])
-        self.assertFalse(isPipelineOrdered(pipeline))
+        pipeline = _makePipeline([("B", "C", "task2"),
+                                  ("A", "B", "task1")])
+        self.assertFalse(pipeTools.isPipelineOrdered(pipeline))
+
+        pipeline = _makePipeline([("A", ("B", "C"), "task1"),
+                                  ("B", "D", "task2"),
+                                  ("C", "E", "task3"),
+                                  (("D", "E"), "F", "task4")])
+        self.assertTrue(pipeTools.isPipelineOrdered(pipeline))
+
+        pipeline = _makePipeline([("A", ("B", "C"), "task1"),
+                                  ("C", "E", "task2"),
+                                  ("B", "D", "task3"),
+                                  (("D", "E"), "F", "task4")])
+        self.assertTrue(pipeTools.isPipelineOrdered(pipeline))
+
+        pipeline = _makePipeline([(("D", "E"), "F", "task4"),
+                                  ("B", "D", "task2"),
+                                  ("C", "E", "task3"),
+                                  ("A", ("B", "C"), "task1")])
+        self.assertFalse(pipeTools.isPipelineOrdered(pipeline))
 
     def testIsOrderedExceptions(self):
-        """Tests for isPipelineOrdered method exceptions
+        """Tests for pipeTools.isPipelineOrdered method exceptions
         """
-
         # two producers should throw ValueError
-        pipeline = Pipeline([TaskDef("lsst.pipe.supertask.tests.AddTask", AddConfig(), AddTask),
-                             TaskDef("lsst.pipe.supertask.tests.AddTask", AddConfig(), AddTask),
-                             TaskDef("lsst.pipe.supertask.tests.MultTask", MultConfig(), MultTask)])
-        with self.assertRaises(ValueError):
-            isPipelineOrdered(pipeline)
+        pipeline = _makePipeline([("A", "B", "task1"),
+                                  ("B", "C", "task2"),
+                                  ("A", "C", "task3"),
+                                  ])
+        with self.assertRaises(pipeTools.DuplicateOutputError):
+            pipeTools.isPipelineOrdered(pipeline)
 
         # missing factory should throw ValueError
-        pipeline = Pipeline([TaskDef("lsst.pipe.supertask.tests.AddTask", AddConfig()),
-                             TaskDef("lsst.pipe.supertask.tests.MultTask", MultConfig())])
-        with self.assertRaises(ValueError):
-            isPipelineOrdered(pipeline)
+        pipeline = _makePipeline([("A", "B", "task1", None),
+                                  ("B", "C", "task2", None)])
+        with self.assertRaises(pipeTools.MissingTaskFactoryError):
+            pipeTools.isPipelineOrdered(pipeline)
+
+    def testOrderPipeline(self):
+        """Tests for pipeTools.orderPipeline method
+        """
+        pipeline = _makePipeline([("A", "B", "task1"),
+                                  ("B", "C", "task2")])
+        pipeline = pipeTools.orderPipeline(pipeline)
+        self.assertEqual(len(pipeline), 2)
+        self.assertEqual(pipeline[0].label, "task1")
+        self.assertEqual(pipeline[1].label, "task2")
+
+        pipeline = _makePipeline([("B", "C", "task2"),
+                                  ("A", "B", "task1")])
+        pipeline = pipeTools.orderPipeline(pipeline)
+        self.assertEqual(len(pipeline), 2)
+        self.assertEqual(pipeline[0].label, "task1")
+        self.assertEqual(pipeline[1].label, "task2")
+
+        pipeline = _makePipeline([("A", ("B", "C"), "task1"),
+                                  ("B", "D", "task2"),
+                                  ("C", "E", "task3"),
+                                  (("D", "E"), "F", "task4")])
+        pipeline = pipeTools.orderPipeline(pipeline)
+        self.assertEqual(len(pipeline), 4)
+        self.assertEqual(pipeline[0].label, "task1")
+        self.assertEqual(pipeline[1].label, "task2")
+        self.assertEqual(pipeline[2].label, "task3")
+        self.assertEqual(pipeline[3].label, "task4")
+
+        pipeline = _makePipeline([("A", ("B", "C"), "task1"),
+                                  ("C", "E", "task3"),
+                                  ("B", "D", "task2"),
+                                  (("D", "E"), "F", "task4")])
+        pipeline = pipeTools.orderPipeline(pipeline)
+        self.assertEqual(len(pipeline), 4)
+        self.assertEqual(pipeline[0].label, "task1")
+        self.assertEqual(pipeline[1].label, "task3")
+        self.assertEqual(pipeline[2].label, "task2")
+        self.assertEqual(pipeline[3].label, "task4")
+
+        pipeline = _makePipeline([(("D", "E"), "F", "task4"),
+                                  ("B", "D", "task2"),
+                                  ("C", "E", "task3"),
+                                  ("A", ("B", "C"), "task1")])
+        pipeline = pipeTools.orderPipeline(pipeline)
+        self.assertEqual(len(pipeline), 4)
+        self.assertEqual(pipeline[0].label, "task1")
+        self.assertEqual(pipeline[1].label, "task2")
+        self.assertEqual(pipeline[2].label, "task3")
+        self.assertEqual(pipeline[3].label, "task4")
+
+        pipeline = _makePipeline([(("D", "E"), "F", "task4"),
+                                  ("C", "E", "task3"),
+                                  ("B", "D", "task2"),
+                                  ("A", ("B", "C"), "task1")])
+        pipeline = pipeTools.orderPipeline(pipeline)
+        self.assertEqual(len(pipeline), 4)
+        self.assertEqual(pipeline[0].label, "task1")
+        self.assertEqual(pipeline[1].label, "task3")
+        self.assertEqual(pipeline[2].label, "task2")
+        self.assertEqual(pipeline[3].label, "task4")
+
+    def testOrderPipelineExceptions(self):
+        """Tests for pipeTools.orderPipeline method exceptions
+        """
+        # two producers should throw ValueError
+        pipeline = _makePipeline([("A", "B", "task1"),
+                                  ("B", "C", "task2"),
+                                  ("A", "C", "task3"),
+                                  ])
+        with self.assertRaises(pipeTools.DuplicateOutputError):
+            pipeline = pipeTools.orderPipeline(pipeline)
+
+        # missing factory should throw ValueError
+        pipeline = _makePipeline([("A", "B", "task1", None),
+                                  ("B", "C", "task2", None)])
+        with self.assertRaises(pipeTools.MissingTaskFactoryError):
+            pipeline = pipeTools.orderPipeline(pipeline)
+
+        # cycle in a graph should throw ValueError
+        pipeline = _makePipeline([("A", "B", "task1"),
+                                  ("B", "C", "task2"),
+                                  ("C", "D", "task3"),
+                                  ("D", "A", "task4")])
+        with self.assertRaises(pipeTools.PipelineDataCycleError):
+            pipeline = pipeTools.orderPipeline(pipeline)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
@@ -135,6 +270,7 @@ class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
 
 def setup_module(module):
     lsst.utils.tests.init()
+
 
 if __name__ == "__main__":
     lsst.utils.tests.init()
