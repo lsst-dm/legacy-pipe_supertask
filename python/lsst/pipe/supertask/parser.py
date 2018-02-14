@@ -1,6 +1,6 @@
 #
 # LSST Data Management System
-# Copyright 2017 LSST Corporation.
+# Copyright 2017-2018 AURA/LSST.
 #
 # This product includes software developed by the
 # LSST Project (http://www.lsst.org/).
@@ -32,6 +32,7 @@ __all__ = ["makeParser"]
 #  Imports of standard modules --
 #--------------------------------
 from argparse import Action, ArgumentParser, RawDescriptionHelpFormatter
+from builtins import object
 import collections
 import itertools
 import re
@@ -46,10 +47,54 @@ import lsst.pipe.base.argumentParser as base_parser
 # Local non-exported definitions --
 #----------------------------------
 
-# Class which keeps a single override, each -c and -C option is converted into
-# instance of this class and are put in a single ordered collection so that
-# overrides can be applied later.
-_Override = collections.namedtuple("_Override", "type,value")
+# Class which determines an action that needs to be performed
+# when building pipeline, its attributes are:
+#   action: the name of the action, e.g. "new_task", "delete_task"
+#   label:  task label, can be None if action does not require label
+#   value:  argument value excluding task label.
+_PipelineAction = collections.namedtuple("_PipelineAction", "action,label,value")
+
+class _PipelineActionType(object):
+    """Class defining a callable type which converts strings into
+    _PipelineAction instances.
+
+    Parameters
+    ----------
+    action : str
+        Name of the action, will become `action` attribute of instance.
+    regex : str
+        Regular expression for argument value, it can define groups 'label'
+        and 'value' which will become corresponding attributes of a
+        returned instance.
+    """
+
+    def __init__(self, action, regex='.*'):
+        self.action = action
+        self.regex = re.compile(regex)
+
+    def __call__(self, value):
+        match = self.regex.match(value)
+        if not match:
+            raise TypeError("Unrecognized option syntax: " + value)
+        # get "label" group or use None as label
+        try:
+            label = match.group("label")
+        except IndexError:
+            label = None
+        # if "value" group is not defined use whole string
+        try:
+            value = match.group("value")
+        except IndexError:
+            pass
+        return _PipelineAction(self.action, label, value)
+
+
+_ACTION_ADD_TASK = _PipelineActionType("new_task", "(?P<value>[^:]+)(:(?P<label>.+))?")
+_ACTION_DELETE_TASK = _PipelineActionType("delete_task", "(?P<value>)(?P<label>.+)")
+_ACTION_MOVE_TASK = _PipelineActionType("move_task", "(?P<label>.+):(?P<value>-?\d+)")
+_ACTION_LABEL_TASK = _PipelineActionType("relabel", "(?P<label>.+):(?P<value>.+)")
+_ACTION_CONFIG = _PipelineActionType("config", "(?P<label>[^.]+)[.](?P<value>.+=.+)")
+_ACTION_CONFIG_FILE = _PipelineActionType("configfile", "(?P<label>.+):(?P<value>.+)")
 
 
 class _LogLevelAction(Action):
@@ -83,58 +128,6 @@ class _LogLevelAction(Action):
             parser.error("loglevel=%s not one of %s" % (levelStr, tuple(self.permittedLevels)))
         dest.append((component, logLevelUpr))
 
-
-class _AppendFlattenAction(Action):
-    """Action class which appends all items of multi-value option to the
-    same destination.
-
-    This is different from standard 'append' action which does not flatten
-    the option values.
-    """
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        """Re-implementation of the base class method.
-
-        See `argparse.Action` documentation for parameter description.
-        """
-        dest = getattr(namespace, self.dest)
-        if dest is None:
-            dest = []
-            setattr(namespace, self.dest, dest)
-        dest += values
-
-
-class _TaskConfigAction(Action):
-    """Action class which associates config overrides with tasks.
-
-    Adds overrides to a list which matches the size of the task list.
-    This class needs to know the name of the (attribute for) task list,
-    there is no easy way to pass it during construction, so for now
-    that name is hard-coded in taskListName attribute.
-    """
-    taskListName = "taskname"   # namespace attribute which holds task list
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        """Re-implementation of the base class method.
-
-        See `argparse.Action` documentation for parameter description.
-        """
-        # make sure that at least one task name already there
-        taskList = getattr(namespace, self.taskListName)
-        if not taskList:
-            parser.error("option %s must follow task name" % option_string)
-
-        # get or make config list
-        dest = getattr(namespace, self.dest)
-        if dest is None:
-            dest = []
-            setattr(namespace, self.dest, dest)
-
-        # extend config list to the same length as task list
-        dest.extend([None] * (len(taskList) - len(dest)))
-        if dest[-1] is None:
-            dest[-1] = []
-        dest[-1].append(values)
 
 # copied with small mods from pipe.base.argumentParser
 class _IdValueAction(Action):
@@ -224,8 +217,8 @@ def _config_file(value):
 
 _EPILOG = """\
 Notes:
-  * --task, --config, --configfile, --id, --loglevel and @file may appear
-    multiple times; all values are used, in order left to right
+  * many options can appear multiple times; all values are used, in order
+    left to right
   * @file reads command-line options from the specified file:
     * data may be distributed among multiple lines (e.g. one option per line)
     * data after # is treated as a comment and ignored
@@ -368,47 +361,85 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
     subparser.add_argument("--no-headers", dest="show_headers", action="store_false", default=True,
                            help="Do not display any headers on output")
 
-    for subcommand in ("show", "run"):
+    for subcommand in ("build", "qgraph", "run"):
         # show/run sub-commands, they are all identical except for the
         # command itself and description
 
-        if subcommand == "show":
+        if subcommand == "build":
             description = textwrap.dedent("""\
-                Display various information about given pipeline. By default all information is
-                displayed, use options to select only subset of the information.""")
+                Build and optionally save pipeline definition.
+                This does not require input data to be specified.""")
+        elif subcommand == "qgraph":
+            description = textwrap.dedent("""\
+                Build and optionally save pipeline and quantum graph.""")
         else:
             description = textwrap.dedent("""\
-                Execute specified pipeline.""")
+                Build and execute pipeline and quantum graph.""")
 
         subparser = subparsers.add_parser(subcommand,
-                                          usage="`%(prog)s -t taskname [options] [-t taskname ...]' or "
-                                          "`%(prog)s -p path [options]'",
                                           description=description,
                                           epilog=_EPILOG,
                                           formatter_class=RawDescriptionHelpFormatter)
-        subparser.set_defaults(subparser=subparser)
-        excl_group = subparser.add_mutually_exclusive_group(required=True)
-        excl_group.add_argument("-p", "--pipeline", dest="pipeline",
-                                help="Location of a serialized pipeline definition (pickle file)."
-                                " This option cannot be used together with task names.",
-                                metavar="PATH")
-        excl_group.add_argument("-t", "--task", dest="taskname", action='append',
-                                help="Names of the tasks to execute. It can be a simple name without dots "
-                                "which will be found in one of the modules located in the known "
-                                "packages or packages specified in --package option. If name contains dots "
-                                "it is assumed to be a fully qualified name of a class found in $PYTHONPATH "
-                                "or in one of the packages specified in --package option.")
-        subparser.add_argument("-c", "--config", dest="config_overrides",
-                               action=_TaskConfigAction, type=_config_override, metavar="NAME=VALUE",
-                               help="Configuration override(s), e.g. -c foo=newfoo -c bar.baz=3. "
-                               "This option applies to a preceding task.")
-        subparser.add_argument("-C", "--configfile", dest="config_overrides",
-                               action=_TaskConfigAction, type=_config_file, metavar="PATH",
-                               help="Configuration override file(s). "
-                               "This option applies to a preceding task.")
-        subparser.add_argument("--save-pipeline", dest="save_pipeline",
+        subparser.set_defaults(subparser=subparser,
+                               pipeline_actions=[])
+        if subcommand == "run":
+            subparser.add_argument("-g", "--qgraph", dest="qgraph",
+                                   help="Location for a serialized quantum graph definition "
+                                   "(pickle file). If this option is given then all input data "
+                                   "options and pipeline-building options cannot be used.",
+                                   metavar="PATH")
+        subparser.add_argument("-p", "--pipeline", dest="pipeline",
+                               help="Location of a serialized pipeline definition (pickle file).",
+                               metavar="PATH")
+        subparser.add_argument("--camera-overrides", dest="camera_overrides",
+                               default=False, action="store_true",
+                               help="Apply standard camera and package overrides "
+                               "to configuration of new tasks.")
+        subparser.add_argument("-t", "--task", metavar="TASK[:LABEL]",
+                               dest="pipeline_actions", action='append', type=_ACTION_ADD_TASK,
+                               help="Task name to add to pipeline, can be either full name "
+                               "with dots including package and module name, or a simple name "
+                               "to find the class in one of the modules in pre-defined packages "
+                               "(see --packages option). Task name can be followed by colon and "
+                               "label name, if label is not given than task base name (class name) "
+                               "is used as label.")
+        subparser.add_argument("-d", "--delete", metavar="LABEL",
+                               dest="pipeline_actions", action='append', type=_ACTION_DELETE_TASK,
+                               help="Delete task with given label from pipeline.")
+        subparser.add_argument("-m", "--move", metavar="LABEL:NUMBER",
+                               dest="pipeline_actions", action='append', type=_ACTION_MOVE_TASK,
+                               help="Move given task to a different position in a pipeline.")
+        subparser.add_argument("-l", "--label", metavar="LABEL:NEW_LABEL",
+                               dest="pipeline_actions", action='append', type=_ACTION_LABEL_TASK,
+                               help="Change label of a given task.")
+        subparser.add_argument("-c", "--config", metavar="LABEL.NAME=VALUE",
+                               dest="pipeline_actions", action='append', type=_ACTION_CONFIG,
+                               help="Configuration override(s) for a task with specified label, "
+                               "e.g. -c task.foo=newfoo -c task.bar.baz=3.")
+        subparser.add_argument("-C", "--configfile", metavar="LABEL:PATH",
+                               dest="pipeline_actions", action='append', type=_ACTION_CONFIG_FILE,
+                               help="Configuration override file(s), applies to a task with a given label.")
+        subparser.add_argument("-o", "--order-pipeline", dest="order_pipeline",
+                               default=False, action="store_true",
+                               help="Order tasks in pipeline based on their data dependencies, "
+                               "ordering is performed as last step before saving or executing "
+                               "pipeline.")
+        subparser.add_argument("-s", "--save-pipeline", dest="save_pipeline",
                                help="Location for storing a serialized pipeline definition (pickle file).",
                                metavar="PATH")
+        if subcommand in ("qgraph", "run"):
+            subparser.add_argument("-q", "--save-qgraph", dest="save_qgraph",
+                                   help="Location for storing a serialized quantum graph definition "
+                                   "(pickle file).",
+                                   metavar="PATH")
+        subparser.add_argument("--pipeline-dot", dest="pipeline_dot",
+                               help="Location for storing GraphViz DOT representation of a pipeline.",
+                               metavar="PATH")
+        if subcommand in ("qgraph", "run"):
+            subparser.add_argument("--qgraph-dot", dest="qgraph_dot",
+                                   help="Location for storing GraphViz DOT representation of a "
+                                   "quantum graph.",
+                                   metavar="PATH")
         subparser.add_argument("--show", metavar="ITEM|ITEM=VALUE", action="append", default=[],
                                help="Dump various info to standard output. Possible items are: "
                                "`config', `config=[Task/]<PATTERN>' or `config=[Task::]<PATTERN>:NOIGNORECASE' "

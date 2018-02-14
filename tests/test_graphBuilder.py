@@ -1,6 +1,6 @@
 #
 # LSST Data Management System
-# Copyright 2016-2017 LSST Corporation.
+# Copyright 2016-2018 AURA/LSST.
 #
 # This product includes software developed by the
 # LSST Project (http://www.lsst.org/).
@@ -120,9 +120,9 @@ class TaskTwo(OneToOneTask):
 class TaskFactoryMock(object):
     def loadTaskClass(self, taskName):
         if taskName == "TaskOne":
-            return TaskOne
+            return TaskOne, "TaskOne"
         elif taskName == "TaskTwo":
-            return TaskTwo
+            return TaskTwo, "TaskTwo"
 
     def makeTask(self, taskClass, config, overrides, butler):
         if config is None:
