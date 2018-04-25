@@ -83,13 +83,15 @@ class ParserLexTestCase(unittest.TestCase):
         """Test for reserved words"""
         lexer = parserLex.ParserLex.make_lexer()
 
-        tokens = "IS NOT IN NULL OR XOR AND BETWEEN LIKE ESCAPE REGEXP"
+#         tokens = "IS NOT IN NULL OR XOR AND BETWEEN LIKE ESCAPE REGEXP"
+        tokens = "NOT IN OR XOR AND"
         lexer.input(tokens)
         for token in tokens.split():
             self._assertToken(lexer.token(), token, token)
         self.assertIsNone(lexer.token())
 
-        tokens = "is not in null or xor and between like escape regexp"
+#         tokens = "is not in null or xor and between like escape regexp"
+        tokens = "not in or xor and"
         lexer.input(tokens)
         for token in tokens.split():
             self._assertToken(lexer.token(), token.upper(), token)
