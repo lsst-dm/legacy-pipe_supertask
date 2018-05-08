@@ -1,4 +1,4 @@
-setupRequired(daf_persistence)
+setupRequired(daf_butler)
 setupRequired(log)
 setupRequired(obs_base)
 setupRequired(pex_config)

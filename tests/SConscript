@@ -2,4 +2,4 @@
 from lsst.sconsUtils import scripts
 
 # TODO: re-enable tests after migration to new butler/registry is complete
-scripts.BasicSConscript.tests(ignoreList=["test_graphBuilder.py", "test_superTask.py"])
+scripts.BasicSConscript.tests()

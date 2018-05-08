@@ -68,3 +68,6 @@ ups/*.cfgc
 bin/stac
 .idea/
 tests/.tests/
+pytest_session.txt
+
+*.pickle
