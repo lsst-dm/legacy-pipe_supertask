@@ -28,9 +28,9 @@ from __future__ import absolute_import, division, print_function
 # "exported" names
 __all__ = ["makeParser"]
 
-#--------------------------------
+# -------------------------------
 #  Imports of standard modules --
-#--------------------------------
+# -------------------------------
 from argparse import Action, ArgumentParser, RawDescriptionHelpFormatter
 from builtins import object
 import collections
@@ -38,14 +38,13 @@ import itertools
 import re
 import textwrap
 
-#-----------------------------
-# Imports for other modules --
-#-----------------------------
-import lsst.pipe.base.argumentParser as base_parser
+# -----------------------------
+#  Imports for other modules --
+# -----------------------------
 
-#----------------------------------
-# Local non-exported definitions --
-#----------------------------------
+# ----------------------------------
+#  Local non-exported definitions --
+# ----------------------------------
 
 # Class which determines an action that needs to be performed
 # when building pipeline, its attributes are:
@@ -53,6 +52,7 @@ import lsst.pipe.base.argumentParser as base_parser
 #   label:  task label, can be None if action does not require label
 #   value:  argument value excluding task label.
 _PipelineAction = collections.namedtuple("_PipelineAction", "action,label,value")
+
 
 class _PipelineActionType(object):
     """Class defining a callable type which converts strings into
@@ -203,17 +203,6 @@ class _IdValueAction(Action):
 
         dest.setdefault(namespace._data_type, []).extend(idDictList)
 
-def _config_override(value):
-    """This callable is used as "type" for -c option.
-    """
-    return _Override("override", value)
-
-
-def _config_file(value):
-    """This callable is used as "type" for -C option.
-    """
-    return _Override("file", value)
-
 
 _EPILOG = """\
 Notes:
@@ -225,12 +214,9 @@ Notes:
     * blank lines and lines starting with # are ignored
 """
 
-#------------------------
-# Exported definitions --
-#------------------------
-DEFAULT_INPUT_NAME = base_parser.DEFAULT_INPUT_NAME
-DEFAULT_CALIB_NAME = base_parser.DEFAULT_CALIB_NAME
-DEFAULT_OUTPUT_NAME = base_parser.DEFAULT_OUTPUT_NAME
+# ------------------------
+#  Exported definitions --
+# ------------------------
 
 
 def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs):
@@ -274,34 +260,19 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
 
     # output options
     group = parser.add_argument_group("Data selection options")
-#     group.add_argument("--type", action="store", dest="_data_type", default=None,
-#                        help=("Defines datatype name for next --id options, must be used before "
-#                              "any --id option appears"))
-#     group.add_argument("--id", nargs="+", dest="id", action=_IdValueAction,
-#                        metavar="KEY=VALUE1[^VALUE2[^VALUE3...]",
-#                        help="Specifies Data ID, --type option is required before --id.")
     group.add_argument("-d", "--data-query", dest="data_query", default=None, metavar="QUERY",
                        help="Data selection query as expected by units database backend.")
-    group.add_argument("--repo-db", dest="repo_db", default=None, metavar="PATH",
-                       help="Location of the RepoDatabase pickle file. By default we are "
-                       "using some in-memory test database generated at run time.")
+    group.add_argument("-b", "--butler-config", dest="butler_config", default=None, metavar="PATH",
+                       help="Location of the gen3 butler/registry config file.")
 
     # repository options
     group = parser.add_argument_group('Data repository options')
-    group.add_argument("-i", "--input", metavar="INPUT", dest="inputRepo",
-                       help="path to input data repository, relative to ${}".format(DEFAULT_INPUT_NAME))
-    group.add_argument("--calib", dest="calibRepo",
-                       help="path to input calibration repository, "
-                       "relative to ${}".format(DEFAULT_CALIB_NAME))
-    group.add_argument("--output", dest="outputRepo",
-                       help="path to output data repository (need not exist), "
-                       "relative to ${}".format(DEFAULT_OUTPUT_NAME))
-    group.add_argument("--rerun", dest="rerun", metavar="[INPUT:]OUTPUT",
-                       help="rerun name: sets OUTPUT to ROOT/rerun/OUTPUT; "
-                       "optionally sets ROOT to ROOT/rerun/INPUT")
-    group.add_argument("--clobber-output", action="store_true", dest="clobberOutput", default=False,
-                       help=("remove and re-create the output directory if it already exists "
-                             "(safe with -j, but not all other forms of parallel execution)"))
+    group.add_argument("-i", "--input", dest="input",
+                       metavar="COLLECTION", default=None,
+                       help="Name of the data butler collection used for input")
+    group.add_argument("--output", dest="output",
+                       metavar="COLLECTION", default=None,
+                       help="Name of the data butler collection used for output")
 
     # output options
     group = parser.add_argument_group("Meta-information output options")
@@ -442,11 +413,11 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
                                    metavar="PATH")
         subparser.add_argument("--show", metavar="ITEM|ITEM=VALUE", action="append", default=[],
                                help="Dump various info to standard output. Possible items are: "
-                               "`config', `config=[Task/]<PATTERN>' or `config=[Task::]<PATTERN>:NOIGNORECASE' "
-                               "to dump configuration possibly matching given pattern; "
-                               "`history=<FIELD>' to dump configuration history for a field, "
-                               "field name is specified as [Task::][SubTask.]Field; "
-                               "`pipeline' to show pipeline composition; "
+                               "`config', `config=[Task/]<PATTERN>' or "
+                               "`config=[Task::]<PATTERN>:NOIGNORECASE' to dump configuration "
+                               "possibly matching given pattern; `history=<FIELD>' to dump "
+                               "configuration history for a field,  field name is specified as "
+                               "[Task::][SubTask.]Field;  `pipeline' to show pipeline composition; "
                                "`graph' to show information about quanta; "
                                "`tasks' to show task composition.")
 

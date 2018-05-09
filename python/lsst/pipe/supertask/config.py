@@ -28,22 +28,23 @@ from __future__ import absolute_import, division, print_function
 __all__ = ["QuantumConfig", "InputDatasetConfig", "OutputDatasetConfig",
            "SuperTaskConfig"]
 
-#--------------------------------
+# -------------------------------
 #  Imports of standard modules --
-#--------------------------------
+# -------------------------------
 
-#-----------------------------
-# Imports for other modules --
-#-----------------------------
+# -----------------------------
+#  Imports for other modules --
+# -----------------------------
 import lsst.pex.config as pexConfig
 
-#----------------------------------
-# Local non-exported definitions --
-#----------------------------------
+# ----------------------------------
+#  Local non-exported definitions --
+# ----------------------------------
 
-#------------------------
-# Exported definitions --
-#------------------------
+# ------------------------
+#  Exported definitions --
+# ------------------------
+
 
 class QuantumConfig(pexConfig.Config):
     """Configuration class which defines SuperTask quanta units.
@@ -59,28 +60,28 @@ class QuantumConfig(pexConfig.Config):
                               optional=True)
 
 
-class InputDatasetConfig(pexConfig.Config):
-    """Configuration class which defines SuperTask input dataset.
+class _DatasetTypeConfig(pexConfig.Config):
+    """Configuration class which defines dataset type used by SuperTask.
 
-    Consists of DatasetType name and list of DataUnit names. SuperTasks
-    typically define one or more input datasets.
+    Consists of DatasetType name, list of DataUnit names and StorageCass name.
+    SuperTasks typically define one or more input and output datasets. This
+    class should not be used directly, instead one of `InputDatasetConfig` or
+    `OutputDatasetConfig` shoudl be used in SuperTak config.
     """
     name = pexConfig.Field(dtype=str,
                            doc="name of the DatasetType")
     units = pexConfig.ListField(dtype=str,
                                 doc="list of DataUnits for this DatasetType")
+    storageClass = pexConfig.Field(dtype=str,
+                                   doc="name of the StorageClass")
 
 
-class OutputDatasetConfig(pexConfig.Config):
-    """Configuration class which defines SuperTask output dataset.
+class InputDatasetConfig(_DatasetTypeConfig):
+    pass
 
-    Consists of DatasetType name and list of DataUnit names. SuperTasks
-    typically define one or more output datasets.
-    """
-    name = pexConfig.Field(dtype=str,
-                           doc="name of the DatasetType")
-    units = pexConfig.ListField(dtype=str,
-                                doc="list of DataUnits fior this DatasetType")
+
+class OutputDatasetConfig(_DatasetTypeConfig):
+    pass
 
 
 class SuperTaskConfig(pexConfig.Config):
