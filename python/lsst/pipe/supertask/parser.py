@@ -353,7 +353,7 @@ def makeParser(fromfile_prefix_chars='@', parser_class=ArgumentParser, **kwargs)
                                           formatter_class=RawDescriptionHelpFormatter)
         subparser.set_defaults(subparser=subparser,
                                pipeline_actions=[])
-        if subcommand == "run":
+        if subcommand in ("qgraph", "run"):
             subparser.add_argument("-g", "--qgraph", dest="qgraph",
                                    help="Location for a serialized quantum graph definition "
                                    "(pickle file). If this option is given then all input data "

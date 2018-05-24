@@ -196,7 +196,8 @@ class SuperTask(Task):
         for key, value in self.config.items():
             if isinstance(value, InputDatasetConfig):
                 dataRefs = quantum.predictedInputs[value.name]
-                inputs[key] = [butler.get(dataRef) for dataRef in dataRefs]
+                inputs[key] = [butler.get(dataRef.datasetType.name, dataRef.dataId)
+                               for dataRef in dataRefs]
 
         # lists of units for output datasets
         outUnits = {}
@@ -218,7 +219,7 @@ class SuperTask(Task):
                 dataRefs = quantum.outputs[value.name]
                 # TODO: check that data objects and data refs are aligned
                 for dataRef, data in zip(dataRefs, dataList):
-                    butler.put(dataRef, data)
+                    butler.put(data, dataRef.datasetType.name, dataRef.dataId)
 
     @classmethod
     def makeDatasetType(cls, dsConfig):

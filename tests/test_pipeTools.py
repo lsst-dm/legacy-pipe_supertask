@@ -23,23 +23,25 @@
 """Simple unit test for Pipeline.
 """
 
-import unittest
 from collections import namedtuple
+import io
+import unittest
 
 import lsst.pex.config as pexConfig
 from lsst.pipe import supertask
 from lsst.pipe.supertask import pipeTools
+from lsst.pipe.supertask.dotTools import pipeline2dot
 import lsst.utils.tests
 
 # mock for actual dataset type
-DS = namedtuple("DS", "name units")
+DS = namedtuple("DS", "name dataUnits")
 
 
 # This method is used by SuperTask to instanciate DatasetType, normally this
 # should come from some other module but we have not defined that yet, so I
 # stick a trivial (mock) implementation here.
 def makeDatasetType(dsConfig):
-    return DS(name=dsConfig.name, units=dsConfig.units)
+    return DS(name=dsConfig.name, dataUnits=dsConfig.units)
 
 
 class ExampleSuperTaskConfig(supertask.SuperTaskConfig):
@@ -71,6 +73,12 @@ def _makeConfig(inputName, outputName):
         config.output2.name = outputName[1] if len(outputName) > 1 else ""
     else:
         config.output1.name = outputName
+
+    units = ["Visit", "Sensor"]
+    config.input1.units = units
+    config.input2.units = units
+    config.output1.units = units
+    config.output2.units = units
 
     return config
 
@@ -261,6 +269,25 @@ class PipelineToolsTestCase(unittest.TestCase):
                                   ("D", "A", "task4")])
         with self.assertRaises(pipeTools.PipelineDataCycleError):
             pipeline = pipeTools.orderPipeline(pipeline)
+
+    def testPipeline2dot(self):
+        """Tests for pipeTools.pipeline2dot method
+        """
+        pipeline = _makePipeline([("A", ("B", "C"), "task1"),
+                                  ("C", "E", "task2"),
+                                  ("B", "D", "task3"),
+                                  (("D", "E"), "F", "task4")])
+        file = io.StringIO()
+        pipeline2dot(pipeline, file)
+
+        # it's hard to validate complete output, just checking few basic things,
+        # even that is not terribly stable
+        lines = file.getvalue().strip().split('\n')
+        ndatasets = 6
+        ntasks = 4
+        nedges = 10
+        nextra = 2  # graph header and closing
+        self.assertEqual(len(lines), ndatasets + ntasks + nedges + nextra)
 
 
 class MyMemoryTestCase(lsst.utils.tests.MemoryTestCase):
