@@ -147,8 +147,14 @@ class ParserYacc:
     # this is the starting rule
     def p_input(self, p):
         """ input : expr
+                  | empty
         """
         p[0] = p[1]
+
+    def p_empty(self, p):
+        """ empty :
+        """
+        p[0] = None
 
     def p_expr(self, p):
         """ expr : expr OR expr
@@ -158,9 +164,9 @@ class ParserYacc:
                  | bool_primary
         """
         if len(p) == 4:
-            p[0] = BinaryOp(lhs=p[1], op=p[2], rhs=p[3])
+            p[0] = BinaryOp(lhs=p[1], op=p[2].upper(), rhs=p[3])
         elif len(p) == 3:
-            p[0] = UnaryOp(op=p[1], operand=p[2])
+            p[0] = UnaryOp(op=p[1].upper(), operand=p[2])
         else:
             p[0] = p[1]
 
