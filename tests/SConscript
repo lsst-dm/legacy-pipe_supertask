@@ -1,5 +1,3 @@
 # -*- python -*-
 from lsst.sconsUtils import scripts
-
-# TODO: re-enable tests after migration to new butler/registry is complete
-scripts.BasicSConscript.tests()
+scripts.BasicSConscript.tests(pyList=[])
