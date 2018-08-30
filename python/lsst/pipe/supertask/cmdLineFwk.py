@@ -32,6 +32,7 @@ __all__ = ['CmdLineFwk']
 #  Imports of standard modules --
 # -------------------------------
 import fnmatch
+import logging
 import multiprocessing
 import pickle
 import re
@@ -41,7 +42,7 @@ import sys
 #  Imports for other modules --
 # -----------------------------
 from lsst.base import disableImplicitThreading
-from lsst.daf.butler import Butler
+from lsst.daf.butler import Butler, DatasetOriginInfoDef
 import lsst.log as lsstLog
 import lsst.pex.config as pexConfig
 from .graphBuilder import GraphBuilder
@@ -163,21 +164,38 @@ class CmdLineFwk(object):
             # stop here
             return 0
 
-        # make butler instance
-        butler = Butler(config=args.butler_config, collection=args.input,
-                        run=args.output)
-        registry = butler.registry
-        collection = butler.collection
-
         if args.qgraph:
             with open(args.qgraph, 'rb') as pickleFile:
                 qgraph = pickle.load(pickleFile)
             # TODO: pipeline is ignored in this case, make sure that user
             # does not specify any pipeline-related options
         else:
+
+            # build collection names
+            inputs = args.input.copy()
+            defaultInputs = inputs.pop("", None)
+            outputs = args.output.copy()
+            defaultOutputs = outputs.pop("", None)
+
+            # Make butler instance. From this Butler we only need Registry
+            # instance. Input/output collections are handled by pre-flight
+            # and we don't want to be constrained here by Butler's restrictions
+            # on collection names.
+            collection = defaultInputs[0] if defaultInputs else None
+            butler = Butler(config=args.butler_config, collection=collection)
+
+            # if default input collections are not given on command line then
+            # use one from Butler (has to be configured in butler config)
+            if not defaultInputs:
+                defaultInputs = [butler.collection]
+            coll = DatasetOriginInfoDef(defaultInputs=defaultInputs,
+                                        defaultOutput=defaultOutputs,
+                                        inputOverrides=inputs,
+                                        outputOverrides=outputs)
+
             # make execution plan (a.k.a. DAG) for pipeline
-            graphBuilder = GraphBuilder(self.taskFactory, registry)
-            qgraph = graphBuilder.makeGraph(pipeline, collection, args.data_query)
+            graphBuilder = GraphBuilder(self.taskFactory, butler.registry, args.skip_existing)
+            qgraph = graphBuilder.makeGraph(pipeline, coll, args.data_query)
 
         if args.save_qgraph:
             with open(args.save_qgraph, "wb") as pickleFile:
@@ -187,7 +205,7 @@ class CmdLineFwk(object):
             graph2dot(qgraph, args.qgraph_dot)
 
         # optionally dump some info
-        self.showInfo(args.show, butler, pipeline, registry, qgraph)
+        self.showInfo(args.show, pipeline, qgraph)
 
         if args.subcommand == "qgraph":
             # stop here
@@ -195,6 +213,17 @@ class CmdLineFwk(object):
 
         # execute
         if args.subcommand == "run":
+
+            # If input/output collections are given then use them to override
+            # butler-configured ones.
+            collection = args.input.get("", [])
+            collection = collection[0] if collection else None
+            run = args.output.get("", None)
+
+            # make butler instance
+            butler = Butler(config=args.butler_config, collection=collection,
+                            run=run)
+
             return self.runPipeline(qgraph, butler, args)
 
     @staticmethod
@@ -224,6 +253,11 @@ class CmdLineFwk(object):
             if level is not None:
                 logger = lsstLog.Log.getLogger(component or "")
                 logger.setLevel(level)
+
+        # Forward all Python logging to lsst.log
+        lgr = logging.getLogger()
+        lgr.setLevel(logging.DEBUG)
+        lgr.addHandler(lsstLog.LogHandler())
 
     def doList(self, show, show_headers):
         """Implementation of the "list" command.
@@ -372,19 +406,15 @@ class CmdLineFwk(object):
         for key, obj in initOutputs.items():
             butler.put(obj, initOutputDatasetTypes[key], {})
 
-    def showInfo(self, showOpts, butler, pipeline, registry, graph):
+    def showInfo(self, showOpts, pipeline, graph):
         """Display useful info about pipeline and environment.
 
         Parameters
         ----------
         showOpts : `list` of `str`
             Defines what to show
-        butler : `Butler`
-            Data butler instance
         pipeline : `Pipeline`
             Pipeline definition
-        registry : `Registry`
-            Registry instance
         graph : `QuantumGraph`
             Execution graph.
         """

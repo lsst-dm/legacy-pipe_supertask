@@ -23,9 +23,6 @@
 Module defining GraphBuilder class and related methods.
 """
 
-from __future__ import print_function
-from builtins import object
-
 __all__ = ['GraphBuilder']
 
 # -------------------------------
@@ -33,6 +30,7 @@ __all__ = ['GraphBuilder']
 # -------------------------------
 import copy
 from collections import namedtuple
+from itertools import chain
 
 # -----------------------------
 #  Imports for other modules --
@@ -40,7 +38,7 @@ from collections import namedtuple
 from .expr_parser.parserYacc import ParserYacc, ParserYaccError
 from .graph import QuantumGraphNodes, QuantumGraph
 import lsst.log as lsstLog
-from lsst.daf.butler import DatasetRef, Quantum
+from lsst.daf.butler import Quantum
 
 # ----------------------------------
 #  Local non-exported definitions --
@@ -73,6 +71,16 @@ class UserExpressionError(GraphBuilderError):
         GraphBuilderError.__init__(self, msg)
 
 
+class OutputExistsError(GraphBuilderError):
+    """Exception generated when output datasets already exist.
+    """
+
+    def __init__(self, taskName, refs):
+        refs = ', '.join(str(ref) for ref in refs)
+        msg = "Output datasets already exist for task {}: {}".format(taskName, refs)
+        GraphBuilderError.__init__(self, msg)
+
+
 # ------------------------
 #  Exported definitions --
 # ------------------------
@@ -89,11 +97,16 @@ class GraphBuilder(object):
         Factory object used to load/instantiate PipelineTasks
     registry : :py:class:`daf.butler.Registry`
         Data butler instance.
+    skipExisting : `bool`, optional
+        If ``True`` (default) then Quantum is not created if all its outputs
+        already exist, otherwise exception is raised.
     """
 
-    def __init__(self, taskFactory, registry):
+    def __init__(self, taskFactory, registry, skipExisting=True):
         self.taskFactory = taskFactory
         self.registry = registry
+        self.dataUnits = registry._schema.dataUnits
+        self.skipExisting = skipExisting
 
     @staticmethod
     def _parseUserQuery(userQuery):
@@ -139,15 +152,15 @@ class GraphBuilder(object):
             taskDef.taskName = tName
         return taskDef
 
-    def makeGraph(self, pipeline, collection, userQuery):
+    def makeGraph(self, pipeline, originInfo, userQuery):
         """Create execution graph for a pipeline.
 
         Parameters
         ----------
         pipeline : :py:class:`Pipeline`
             Pipeline definition, task names/classes and their configs.
-        collection : `str`
-            Input collection name.
+        originInfo : `DatasetOriginInfo`
+            Object which provides names of the input/output collections.
         userQuery : `str`
             String which defunes user-defined selection for registry, should be
             empty or `None` if there is no restrictions on data selection.
@@ -158,7 +171,9 @@ class GraphBuilder(object):
 
         Raises
         ------
-        Exceptions will be raised on errors.
+        `UserExpressionError` is raised when user expression cannot be parsed.
+        `OutputExistsError` is raised when output datasets already exist.
+        Other exceptions may be raised by underlying registry classes.
         """
 
         # make sure all task classes are loaded
@@ -180,7 +195,8 @@ class GraphBuilder(object):
         inputs, outputs = self._makeFullIODatasetTypes(taskDatasets)
 
         # make a graph
-        return self._makeGraph(taskDatasets, inputs, outputs, collection, userQuery)
+        return self._makeGraph(taskDatasets, inputs, outputs,
+                               originInfo, userQuery)
 
     def _makeFullIODatasetTypes(self, taskDatasets):
         """Returns full set of input and output dataset types for all tasks.
@@ -217,7 +233,7 @@ class GraphBuilder(object):
         outputs = set(allDatasetTypes[name] for name in outputs)
         return (inputs, outputs)
 
-    def _makeGraph(self, taskDatasets, inputs, outputs, collection, userQuery):
+    def _makeGraph(self, taskDatasets, inputs, outputs, originInfo, userQuery):
         """Make QuantumGraph instance.
 
         Parameters
@@ -228,8 +244,8 @@ class GraphBuilder(object):
             Datasets which should already exist in input repository
         outputs : `set` of `DatasetType`
             Datasets which will be created by tasks
-        collection : `str`
-            Input collection name.
+        originInfo : `DatasetOriginInfo`
+            Object which provides names of the input/output collections.
         userQuery : `str`
             String which defunes user-defined selection for registry, should be
             empty or `None` if there is no restrictions on data selection.
@@ -240,8 +256,7 @@ class GraphBuilder(object):
         """
         parsedQuery = self._parseUserQuery(userQuery or "")
         expr = None if parsedQuery is None else str(parsedQuery)
-        header, rows = self.registry.selectDataUnits([collection], expr, inputs, outputs)
-        _LOG.debug("header: %s", header)
+        rows = self.registry.selectDataUnits(originInfo, expr, inputs, outputs)
 
         # store result locally for multi-pass algorithm below
         # TODO: change it to single pass
@@ -250,40 +265,39 @@ class GraphBuilder(object):
             _LOG.debug("row: %s", row)
             unitVerse.append(row)
 
-        def _unitColumns(units):
-            """Returns indices of columns (in header) corresponding to a set of `units`"""
-            return [col for col, (unit, link) in enumerate(header) if unit in units]
-
         # Next step is to group by task quantum units
         qgraph = QuantumGraph()
         for taskDss in taskDatasets:
             taskQuantaInputs = {}    # key is the quantum dataId (as tuple)
             taskQuantaOutputs = {}   # key is the quantum dataId (as tuple)
-            qunits = taskDss.taskDef.config.quantum.units
-            qcolumns = _unitColumns(qunits)
-            _LOG.debug("qunits: %s -> %s", qunits, qcolumns)
+            qlinks = []
+            for dataUnitName in taskDss.taskDef.config.quantum.units:
+                dataUnit = self.dataUnits[dataUnitName]
+                qlinks += dataUnit.link
+            _LOG.debug("task %s qunits: %s", taskDss.taskDef.label, qlinks)
 
             # some rows will be non-unique for subset of units, create
             # temporary structure to remove duplicates
             for row in unitVerse:
-                qkey = tuple((header[col][1], row[col]) for col in qcolumns)
+                qkey = tuple((col, row.dataId[col]) for col in qlinks)
                 _LOG.debug("qkey: %s", qkey)
+
+                def _dataRefKey(dataRef):
+                    return tuple(sorted(dataRef.dataId.items()))
 
                 qinputs = taskQuantaInputs.setdefault(qkey, {})
                 for dsType in taskDss.inputs:
-                    dataIds = qinputs.setdefault(dsType, set())
-                    ucolumns = _unitColumns(dsType.dataUnits)
-                    dataId = tuple((header[col][1], row[col]) for col in ucolumns)
-                    dataIds.add(dataId)
-                    _LOG.debug("add input dataId: %s %s", dsType.name, dataId)
+                    dataRefs = qinputs.setdefault(dsType, {})
+                    dataRef = row.datasetRefs[dsType]
+                    dataRefs[_dataRefKey(dataRef)] = dataRef
+                    _LOG.debug("add input dataRef: %s %s", dsType.name, dataRef)
 
                 qoutputs = taskQuantaOutputs.setdefault(qkey, {})
                 for dsType in taskDss.outputs:
-                    dataIds = qoutputs.setdefault(dsType, set())
-                    ucolumns = _unitColumns(dsType.dataUnits)
-                    dataId = tuple((header[col][1], row[col]) for col in ucolumns)
-                    dataIds.add(dataId)
-                    _LOG.debug("add output dataId: %s %s", dsType.name, dataId)
+                    dataRefs = qoutputs.setdefault(dsType, {})
+                    dataRef = row.datasetRefs[dsType]
+                    dataRefs[_dataRefKey(dataRef)] = dataRef
+                    _LOG.debug("add output dataRef: %s %s", dsType.name, dataRef)
 
             # all nodes for this task
             quanta = []
@@ -291,16 +305,27 @@ class GraphBuilder(object):
                 # taskQuantaInputs and taskQuantaOutputs have the same keys
                 _LOG.debug("make quantum for qkey: %s", qkey)
                 quantum = Quantum(run=None, task=None)
-                for dsType, dataIds in taskQuantaInputs[qkey].items():
-                    for dataId in dataIds:
-                        ref = DatasetRef(dsType, dict(dataId))
+
+                # add all outputs, but check first that outputs don't exist
+                outputs = list(chain.from_iterable(dataRefs.values()
+                                                   for dataRefs in taskQuantaOutputs[qkey].values()))
+                for ref in outputs:
+                    _LOG.debug("add output: %s", ref)
+                if self.skipExisting and all(ref.id is not None for ref in outputs):
+                    _LOG.debug("all output dataRefs already exist, skip quantum")
+                    continue
+                if any(ref.id is not None for ref in outputs):
+                    # some outputs exist, can't override them
+                    raise OutputExistsError(taskDss.taskDef.taskName, outputs)
+                for ref in outputs:
+                    quantum.addOutput(ref)
+
+                # add all inputs
+                for dataRefs in taskQuantaInputs[qkey].values():
+                    for ref in dataRefs.values():
                         quantum.addPredictedInput(ref)
                         _LOG.debug("add input: %s", ref)
-                for dsType, dataIds in taskQuantaOutputs[qkey].items():
-                    for dataId in dataIds:
-                        ref = DatasetRef(dsType, dict(dataId))
-                        quantum.addOutput(ref)
-                        _LOG.debug("add output: %s", ref)
+
                 quanta.append(quantum)
 
             qgraph.append(QuantumGraphNodes(taskDss.taskDef, quanta))
