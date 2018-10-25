@@ -40,7 +40,7 @@ import sys
 # -----------------------------
 from lsst.base import disableImplicitThreading
 from lsst.daf.butler import Butler, DatasetOriginInfoDef
-import lsst.log as lsstLog
+import lsst.log
 import lsst.pex.config as pexConfig
 from .graphBuilder import GraphBuilder
 from .cmdLineParser import makeParser
@@ -62,6 +62,8 @@ log4j.appender.A1.Target=System.err
 log4j.appender.A1.layout=PatternLayout
 log4j.appender.A1.layout.ConversionPattern={}
 """
+
+_LOG = logging.getLogger(__name__.partition(".")[2])
 
 
 class _MPMap(object):
@@ -244,19 +246,19 @@ class CmdLineFwk(object):
             message_fmt = "%c %p: %m%n"
 
         # global logging config
-        lsstLog.configure_prop(_LOG_PROP.format(message_fmt))
+        lsst.log.configure_prop(_LOG_PROP.format(message_fmt))
 
         # configure individual loggers
         for component, level in logLevels:
-            level = getattr(lsstLog.Log, level.upper(), None)
+            level = getattr(lsst.log.Log, level.upper(), None)
             if level is not None:
-                logger = lsstLog.Log.getLogger(component or "")
+                logger = lsst.log.Log.getLogger(component or "")
                 logger.setLevel(level)
 
         # Forward all Python logging to lsst.log
         lgr = logging.getLogger()
         lgr.setLevel(logging.DEBUG)
-        lgr.addHandler(lsstLog.LogHandler())
+        lgr.addHandler(lsst.log.LogHandler())
 
     def doList(self, show, show_headers):
         """Implementation of the "list" command.
@@ -342,8 +344,8 @@ class CmdLineFwk(object):
             self.writeTaskInitOutputs(task, butler)
 
             if numProc > 1 and not taskDef.taskClass.canMultiprocess:
-                lsstLog.warn("Task %s does not support multiprocessing; using one process",
-                             taskDef.taskName)
+                _LOG.warn("Task %s does not support multiprocessing; using one process",
+                          taskDef.taskName)
                 numProc = 1
 
         # chose map function being simple sequential map or multi-process map
@@ -364,11 +366,11 @@ class CmdLineFwk(object):
         for taskNodes in graph:
             taskDef, quanta = taskNodes.taskDef, taskNodes.quanta
             # targets for map function
-            target_list = [(taskDef.taskClass, taskDef.config, quantum, butler)
+            target_list = [(taskDef.taskClass, taskDef.config, quantum, butler, self.taskFactory)
                            for quantum in quanta]
             # call task on each argument in a list
             profile_name = getattr(args, "profile", None)
-            with util.profile(profile_name, lsstLog):
+            with util.profile(profile_name, _LOG):
                 mapFunc(self._executePipelineTask, target_list)
 
     def _updateOutputCollection(self, graph, butler):
@@ -409,24 +411,31 @@ class CmdLineFwk(object):
             registry = butler.registry
             registry.associate(collection, id2ref.values())
 
-    def _executePipelineTask(self, target):
+    @staticmethod
+    def _executePipelineTask(target):
         """Execute super-task on a single data item.
 
         Parameters
         ----------
-        target: `tuple` of `(taskClass, config, quantum, butler)`
+        target: `tuple`
+            Tuple contains these elements:
+            - ``taskClass``: `PipelineTask` sub-class
+            - ``config``: `PipelineTaskConfig` instance
+            - ``quantum``: `Quantum` instance for this execution
+            - ``butler``: data butler instance
+            - ``taskFactory``: `TaskFactory` instance
         """
-        taskClass, config, quantum, butler = target
+        taskClass, config, quantum, butler, taskFactory = target
 
         # setup logging, include dataId into MDC
 #         if dataRef is not None:
 #             if hasattr(dataRef, "dataId"):
-#                 lsstLog.MDC("LABEL", str(dataRef.dataId))
+#                 lsst.log.MDC("LABEL", str(dataRef.dataId))
 #             elif isinstance(dataRef, (list, tuple)):
-#                 lsstLog.MDC("LABEL", str([ref.dataId for ref in dataRef if hasattr(ref, "dataId")]))
+#                 lsst.log.MDC("LABEL", str([ref.dataId for ref in dataRef if hasattr(ref, "dataId")]))
 
         # make task instance
-        task = self.taskFactory.makeTask(taskClass, config, None, butler)
+        task = taskFactory.makeTask(taskClass, config, None, butler)
 
         # Call task runQuantum() method. Any exception thrown here propagates
         # to multiprocessing module and to parent process.
