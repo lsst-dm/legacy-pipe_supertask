@@ -4,6 +4,9 @@
 __all__ = ["ConfigOverrides"]
 
 from builtins import object
+import ast
+
+from lsst.pipe.base import PipelineTaskConfig
 import lsst.pex.config as pexConfig
 import lsst.pex.exceptions as pexExceptions
 
@@ -62,6 +65,22 @@ class ConfigOverrides(object):
         """
         self._overrides += [('value', (field, value))]
 
+    def addDatatypeNameSubstitution(self, nameDictString):
+        """Add keys and values to be used in formatting config nameTemplates
+
+        This method takes in a dictionary passed in on the command line as
+        a string in the format of key:value which will be used to format
+        fields in all of the nameTemplates found in a config object. I.E.
+        a nameDictString = {'input': deep} would be used to format a
+        nameTemplate of "{input}CoaddDatasetProduct".
+
+        Parameters
+        ----------
+        nameDictString : str
+            String formatted as a python dict used in formatting nameTemplates
+        """
+        self._overrides += [('namesDict', (nameDictString))]
+
     def applyTo(self, config):
         """Apply all overrides to a task configuration object.
 
@@ -103,3 +122,16 @@ class ConfigOverrides(object):
                     # this can throw
                     value = eval(value, {})
                     setattr(obj, field[-1], value)
+            elif otype == 'namesDict':
+                try:
+                    parsedNamesDict = ast.literal_eval(override)
+                    if not isinstance(parsedNamesDict, dict):
+                        raise ValueError()
+                except ValueError:
+                    raise pexExceptions.RuntimeError(f"Unable parse --dataset-name-substitution {override} "
+                                                     "into a valid dict")
+                if not isinstance(config, PipelineTaskConfig):
+                    raise pexExceptions.RuntimeError("Dataset name substitution can only be used on Tasks "
+                                                     "with a ConfigClass that is a subclass of "
+                                                     "PipelineTaskConfig")
+                config.formatTemplateNames(parsedNamesDict)

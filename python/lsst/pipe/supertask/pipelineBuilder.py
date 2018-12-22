@@ -136,6 +136,10 @@ class PipelineBuilder(object):
 
                 self._configOverrideFile(pipeline, action.label, action.value)
 
+            elif action.action == 'name_templates':
+
+                self._substituteDatatypeNames(pipeline, action.label, action.value)
+
         # conditionally re-order pipeline if requested, but unconditionally
         # check for possible errors
         orderedPipeline = pipeTools.orderPipeline(pipeline, self.taskFactory)
@@ -288,4 +292,23 @@ class PipelineBuilder(object):
         key, sep, val = value.partition('=')
         overrides = ConfigOverrides()
         overrides.addFileOverride(value)
+        overrides.applyTo(pipeline[idx].config)
+
+    def _substituteDatatypeNames(self, pipeline, label, value):
+        """Apply name string formatting to config file
+
+        Parameters
+        ----------
+        pipeline : py:class:`Pipeline`
+            Pipeline instance.
+        label : `str`
+            Label of the task.
+        value : `str`
+            String of the form of a dictionary of template keyword to value
+        """
+        idx = pipeline.labelIndex(label)
+        if idx < 0:
+            raise LookupError("Task label is not found: " + label)
+        overrides = ConfigOverrides()
+        overrides.addDatatypeNameSubstitution(value)
         overrides.applyTo(pipeline[idx].config)
